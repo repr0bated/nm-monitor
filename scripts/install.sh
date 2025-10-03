@@ -97,9 +97,13 @@ if command -v nmcli >/dev/null 2>&1; then
   if ! nmcli -t -f NAME c show | grep -qx "${BRIDGE}"; then
     nmcli c add type ovs-bridge con-name "${BRIDGE}" ifname "${BRIDGE}"
   fi
-  # Create an internal ovs-interface for L3 on the bridge
+  # Create an internal ovs-interface for L3 on the bridge via an ovs-port
+  INT_PORT_NAME="${BRIDGE}-port-int"
+  if ! nmcli -t -f NAME c show | grep -qx "${INT_PORT_NAME}"; then
+    nmcli c add type ovs-port con-name "${INT_PORT_NAME}" master "${BRIDGE}"
+  fi
   if ! nmcli -t -f NAME c show | grep -qx "${BRIDGE}-if"; then
-    nmcli c add type ovs-interface con-name "${BRIDGE}-if" ifname "${BRIDGE}" master "${BRIDGE}"
+    nmcli c add type ovs-interface con-name "${BRIDGE}-if" ifname "${BRIDGE}" master "${INT_PORT_NAME}"
   fi
   if [[ -n "${NM_IP}" ]]; then
     nmcli c modify "${BRIDGE}-if" ipv4.method manual ipv4.addresses "${NM_IP}"
@@ -118,8 +122,9 @@ if command -v nmcli >/dev/null 2>&1; then
       nmcli c add type ethernet con-name "${ETH_NAME}" ifname "${UPLINK}" master "${PORT_NAME}"
     fi
   fi
-  nmcli c up "${BRIDGE}" || true
-  nmcli c up "${BRIDGE}-if" || true
+  nmcli -w 10 c up "${BRIDGE}" || true
+  nmcli -w 10 c up "${INT_PORT_NAME}" || true
+  nmcli -w 10 c up "${BRIDGE}-if" || true
 fi
 
 # Optionally create ovsbr1
@@ -135,8 +140,12 @@ if [[ "$WITH_OVSBR1" == 1 ]]; then
     if ! nmcli -t -f NAME c show | grep -qx "ovsbr1"; then
       nmcli c add type ovs-bridge con-name "ovsbr1" ifname "ovsbr1"
     fi
+    OVSBR1_INT_PORT_NAME="ovsbr1-port-int"
+    if ! nmcli -t -f NAME c show | grep -qx "${OVSBR1_INT_PORT_NAME}"; then
+      nmcli c add type ovs-port con-name "${OVSBR1_INT_PORT_NAME}" master "ovsbr1"
+    fi
     if ! nmcli -t -f NAME c show | grep -qx "ovsbr1-if"; then
-      nmcli c add type ovs-interface con-name "ovsbr1-if" ifname "ovsbr1" master "ovsbr1"
+      nmcli c add type ovs-interface con-name "ovsbr1-if" ifname "ovsbr1" master "${OVSBR1_INT_PORT_NAME}"
     fi
     if [[ -n "${OVSBR1_IP}" ]]; then
       nmcli c modify "ovsbr1-if" ipv4.method manual ipv4.addresses "${OVSBR1_IP}"
@@ -155,8 +164,9 @@ if [[ "$WITH_OVSBR1" == 1 ]]; then
         nmcli c add type ethernet con-name "${ETH_NAME}" ifname "${OVSBR1_UPLINK}" master "${PORT_NAME}"
       fi
     fi
-    nmcli c up "ovsbr1" || true
-    nmcli c up "ovsbr1-if" || true
+    nmcli -w 10 c up "ovsbr1" || true
+    nmcli -w 10 c up "${OVSBR1_INT_PORT_NAME}" || true
+    nmcli -w 10 c up "ovsbr1-if" || true
   fi
 fi
 
