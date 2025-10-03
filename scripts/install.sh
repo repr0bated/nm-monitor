@@ -40,6 +40,13 @@ mkdir -p /etc/ovs-port-agent
 if [[ ! -f /etc/ovs-port-agent/config.toml ]]; then
   install -m 0644 config/config.toml.example /etc/ovs-port-agent/config.toml
   sed -i "s/^bridge_name = \".*\"/bridge_name = \"${BRIDGE}\"/" /etc/ovs-port-agent/config.toml
+  # Ensure renaming is enabled by default
+  if ! grep -q '^enable_rename' /etc/ovs-port-agent/config.toml; then
+    printf '\n# Enable renaming by default\n' >> /etc/ovs-port-agent/config.toml
+    printf 'enable_rename = true\n' >> /etc/ovs-port-agent/config.toml
+  else
+    sed -i 's/^enable_rename.*/enable_rename = true/' /etc/ovs-port-agent/config.toml
+  fi
 fi
 
 # Systemd unit

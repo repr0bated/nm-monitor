@@ -18,6 +18,9 @@ managed_block_tag = "ovs-port-agent"
 # Naming template: variables {container}, {index}
 naming_template = "veth-{container}-eth{index}"
 
+# Enable renaming by default
+enable_rename = true
+
 # Optional command to resolve container name from ifname/netns (advanced)
 # container_name_cmd = "/usr/local/bin/container-name-from-netns {ifname}"
 
