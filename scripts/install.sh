@@ -6,14 +6,19 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 cd "$REPO_ROOT"
 
-# Usage: ./scripts/install.sh [--bridge ovsbr0] [--with-ovsbr1] [--system]
+# Usage: ./scripts/install.sh [--bridge ovsbr0] [--with-ovsbr1] [--system] [--uplink IFACE] [--nm-ip CIDR] [--nm-gw GW]
 # - Installs ovs-port-agent binary, config, and systemd unit
+# - Ensures OVS bridge exists (ovs-vsctl)
+# - If NetworkManager is available, creates NM connections for the bridge (and optional uplink)
 # - Optionally creates an empty OVS bridge ovsbr1
 
 BRIDGE="ovsbr0"
 WITH_OVSBR1=0
 SYSTEM=0
 PREFIX="/usr/local"
+UPLINK=""
+NM_IP=""
+NM_GW=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -23,6 +28,12 @@ while [[ $# -gt 0 ]]; do
       WITH_OVSBR1=1; shift;;
     --system)
       SYSTEM=1; shift;;
+    --uplink)
+      UPLINK="$2"; shift 2;;
+    --nm-ip)
+      NM_IP="$2"; shift 2;;
+    --nm-gw)
+      NM_GW="$2"; shift 2;;
     *) echo "Unknown arg: $1"; exit 1;;
   esac
 done
@@ -67,6 +78,32 @@ fi
 if ! ovs-vsctl br-exists "${BRIDGE}"; then
   echo "Creating OVS bridge ${BRIDGE}"
   ovs-vsctl add-br "${BRIDGE}"
+fi
+
+# If NetworkManager is present, create NM connections for the bridge/uplink
+if command -v nmcli >/dev/null 2>&1; then
+  echo "Configuring NetworkManager connection for ${BRIDGE}"
+  if ! nmcli -t -f NAME c show | grep -qx "${BRIDGE}"; then
+    nmcli c add type ovs-bridge con-name "${BRIDGE}" ifname "${BRIDGE}"
+  fi
+  if [[ -n "${NM_IP}" ]]; then
+    nmcli c modify "${BRIDGE}" ipv4.method manual ipv4.addresses "${NM_IP}"
+    if [[ -n "${NM_GW}" ]]; then
+      nmcli c modify "${BRIDGE}" ipv4.gateway "${NM_GW}"
+    fi
+    nmcli c modify "${BRIDGE}" ipv6.method disabled || true
+  fi
+  if [[ -n "${UPLINK}" ]]; then
+    PORT_NAME="${BRIDGE}-port-${UPLINK}"
+    if ! nmcli -t -f NAME c show | grep -qx "${PORT_NAME}"; then
+      nmcli c add type ovs-port con-name "${PORT_NAME}" ifname "${UPLINK}" master "${BRIDGE}"
+    fi
+    ETH_NAME="${BRIDGE}-uplink-${UPLINK}"
+    if ! nmcli -t -f NAME c show | grep -qx "${ETH_NAME}"; then
+      nmcli c add type ethernet con-name "${ETH_NAME}" ifname "${UPLINK}" master "${PORT_NAME}"
+    fi
+  fi
+  nmcli c up "${BRIDGE}" || true
 fi
 
 # Optionally create ovsbr1
