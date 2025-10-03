@@ -1,0 +1,25 @@
+# ovs-port-agent configuration
+
+# Name of the Open vSwitch bridge to manage
+bridge_name = "ovsbr0"
+
+# Interfaces file to update for Proxmox visibility
+interfaces_path = "/etc/network/interfaces"
+
+# Interface name prefixes to include as container ports
+include_prefixes = ["veth-", "tap", "veth"]
+
+# Debounce interval for periodic reconcile (ms)
+debounce_ms = 500
+
+# Tag for the bounded block in /etc/network/interfaces
+managed_block_tag = "ovs-port-agent"
+
+# Naming template: variables {container}, {index}
+naming_template = "veth-{container}-eth{index}"
+
+# Optional command to resolve container name from ifname/netns (advanced)
+# container_name_cmd = "/usr/local/bin/container-name-from-netns {ifname}"
+
+# Ledger file for append-only audit (hash chain JSON lines)
+ledger_path = "/var/lib/ovs-port-agent/ledger.jsonl"
