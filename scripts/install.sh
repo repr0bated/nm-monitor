@@ -91,16 +91,20 @@ fi
 
 # If NetworkManager is present, create NM connections for the bridge/uplink
 if command -v nmcli >/dev/null 2>&1; then
-  echo "Configuring NetworkManager connection for ${BRIDGE}"
+  echo "Configuring NetworkManager connection for ${BRIDGE} (bridge + ovs-interface)"
   if ! nmcli -t -f NAME c show | grep -qx "${BRIDGE}"; then
     nmcli c add type ovs-bridge con-name "${BRIDGE}" ifname "${BRIDGE}"
   fi
+  # Create an internal ovs-interface for L3 on the bridge
+  if ! nmcli -t -f NAME c show | grep -qx "${BRIDGE}-if"; then
+    nmcli c add type ovs-interface con-name "${BRIDGE}-if" ifname "${BRIDGE}" master "${BRIDGE}"
+  fi
   if [[ -n "${NM_IP}" ]]; then
-    nmcli c modify "${BRIDGE}" ipv4.method manual ipv4.addresses "${NM_IP}"
+    nmcli c modify "${BRIDGE}-if" ipv4.method manual ipv4.addresses "${NM_IP}"
     if [[ -n "${NM_GW}" ]]; then
-      nmcli c modify "${BRIDGE}" ipv4.gateway "${NM_GW}"
+      nmcli c modify "${BRIDGE}-if" ipv4.gateway "${NM_GW}"
     fi
-    nmcli c modify "${BRIDGE}" ipv6.method disabled || true
+    nmcli c modify "${BRIDGE}-if" ipv6.method disabled || true
   fi
   if [[ -n "${UPLINK}" ]]; then
     PORT_NAME="${BRIDGE}-port-${UPLINK}"
@@ -113,6 +117,7 @@ if command -v nmcli >/dev/null 2>&1; then
     fi
   fi
   nmcli c up "${BRIDGE}" || true
+  nmcli c up "${BRIDGE}-if" || true
 fi
 
 # Optionally create ovsbr1
@@ -122,16 +127,19 @@ if [[ "$WITH_OVSBR1" == 1 ]]; then
     ovs-vsctl add-br ovsbr1
   fi
   if command -v nmcli >/dev/null 2>&1; then
-    echo "Configuring NetworkManager connection for ovsbr1"
+    echo "Configuring NetworkManager connection for ovsbr1 (bridge + ovs-interface)"
     if ! nmcli -t -f NAME c show | grep -qx "ovsbr1"; then
       nmcli c add type ovs-bridge con-name "ovsbr1" ifname "ovsbr1"
     fi
+    if ! nmcli -t -f NAME c show | grep -qx "ovsbr1-if"; then
+      nmcli c add type ovs-interface con-name "ovsbr1-if" ifname "ovsbr1" master "ovsbr1"
+    fi
     if [[ -n "${OVSBR1_IP}" ]]; then
-      nmcli c modify "ovsbr1" ipv4.method manual ipv4.addresses "${OVSBR1_IP}"
+      nmcli c modify "ovsbr1-if" ipv4.method manual ipv4.addresses "${OVSBR1_IP}"
       if [[ -n "${OVSBR1_GW}" ]]; then
-        nmcli c modify "ovsbr1" ipv4.gateway "${OVSBR1_GW}"
+        nmcli c modify "ovsbr1-if" ipv4.gateway "${OVSBR1_GW}"
       fi
-      nmcli c modify "ovsbr1" ipv6.method disabled || true
+      nmcli c modify "ovsbr1-if" ipv6.method disabled || true
     fi
     if [[ -n "${OVSBR1_UPLINK}" ]]; then
       PORT_NAME="ovsbr1-port-${OVSBR1_UPLINK}"
@@ -144,6 +152,7 @@ if [[ "$WITH_OVSBR1" == 1 ]]; then
       fi
     fi
     nmcli c up "ovsbr1" || true
+    nmcli c up "ovsbr1-if" || true
   fi
 fi
 
