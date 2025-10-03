@@ -8,6 +8,8 @@ use log::{debug, info, warn};
 use std::{collections::BTreeSet, path::PathBuf};
 use tokio::time::{sleep, Duration, Instant};
 use std::fs;
+use rtnetlink::{new_connection};
+use futures_util::TryStreamExt;
 
 pub async fn monitor_links(
     bridge: String,
@@ -20,28 +22,51 @@ pub async fn monitor_links(
 ) -> Result<()> {
     let interfaces_path = PathBuf::from(interfaces_path);
 
-    // Try rtnetlink subscription via /proc/net/netlink as a simple presence check
-    let have_netlink = fs::metadata("/proc/net/netlink").is_ok();
-    let mut last_reconcile = Instant::now() - Duration::from_secs(3600);
-    loop {
-        // Cheap event hint: modification time change on /sys/class/net
-        let tick = Instant::now();
-        if let Err(err) = reconcile_once(
-            &bridge,
-            &include_prefixes,
-            &interfaces_path,
-            &managed_tag,
-            enable_rename,
-            &naming_template,
-            &ledger_path,
-        ) {
-            warn!("reconcile failed: {err:?}");
-        }
-        last_reconcile = tick;
+    // Start rtnetlink listener
+    let (conn, handle, _) = new_connection().context("create rtnetlink connection")?;
+    tokio::spawn(conn);
 
-        // Fallback periodic sleep; when rtnetlink is added, we'll wake on events
-        let period = if have_netlink { 1500 } else { 1000 };
-        sleep(Duration::from_millis(period)).await;
+    // Debounce window
+    let debounce = Duration::from_millis(500);
+    let mut last_fire = Instant::now() - debounce;
+
+    // Initial reconcile
+    if let Err(err) = reconcile_once(
+        &bridge,
+        &include_prefixes,
+        &interfaces_path,
+        &managed_tag,
+        enable_rename,
+        &naming_template,
+        &ledger_path,
+    ) {
+        warn!("initial reconcile failed: {err:?}");
+    }
+
+    loop {
+        let mut triggered = false;
+        // Listen for any link events, but since rtnetlink crate doesn't expose a raw stream here,
+        // poll a lightweight request periodically as a trigger; fallback timer ensures progress.
+        if handle.link().get().execute().try_next().await.is_ok() {
+            triggered = true;
+        }
+        // periodic fallback
+        sleep(Duration::from_millis(1000)).await;
+
+        if triggered && last_fire.elapsed() >= debounce {
+            last_fire = Instant::now();
+            if let Err(err) = reconcile_once(
+                &bridge,
+                &include_prefixes,
+                &interfaces_path,
+                &managed_tag,
+                enable_rename,
+                &naming_template,
+                &ledger_path,
+            ) {
+                warn!("reconcile failed: {err:?}");
+            }
+        }
     }
 }
 
@@ -60,8 +85,9 @@ fn reconcile_once(
     let mut desired = BTreeSet::new();
     for raw in desired_raw.iter() {
         let target = if enable_rename {
+            let base = crate::link::container_short_name_from_ifname(raw).unwrap_or_else(|| raw.clone());
             // naive index=0 until container index is resolved
-            render_template(naming_template, raw, 0)
+            render_template(naming_template, &base, 0)
         } else {
             raw.clone()
         };

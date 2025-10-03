@@ -22,3 +22,5 @@ clap = { version = "4", features = ["derive"] }
 zbus = { version = "3", features = ["tokio"] }
 sha2 = "0.10"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+rtnetlink = { version = "0.14", features = ["tokio_socket"] }
+futures-util = "0.3"
