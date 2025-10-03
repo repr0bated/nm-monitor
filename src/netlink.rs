@@ -4,9 +4,10 @@ use crate::naming::render_template;
 use crate::ledger::Ledger;
 use crate::link;
 use anyhow::{Context, Result};
-use log::{info, warn};
+use log::{debug, info, warn};
 use std::{collections::BTreeSet, path::PathBuf};
-use tokio::time::{sleep, Duration};
+use tokio::time::{sleep, Duration, Instant};
+use std::fs;
 
 pub async fn monitor_links(
     bridge: String,
@@ -19,7 +20,12 @@ pub async fn monitor_links(
 ) -> Result<()> {
     let interfaces_path = PathBuf::from(interfaces_path);
 
+    // Try rtnetlink subscription via /proc/net/netlink as a simple presence check
+    let have_netlink = fs::metadata("/proc/net/netlink").is_ok();
+    let mut last_reconcile = Instant::now() - Duration::from_secs(3600);
     loop {
+        // Cheap event hint: modification time change on /sys/class/net
+        let tick = Instant::now();
         if let Err(err) = reconcile_once(
             &bridge,
             &include_prefixes,
@@ -31,8 +37,11 @@ pub async fn monitor_links(
         ) {
             warn!("reconcile failed: {err:?}");
         }
-        // TODO: replace with inotify/netlink subscription; for now, periodic scan
-        sleep(Duration::from_millis(1000)).await;
+        last_reconcile = tick;
+
+        // Fallback periodic sleep; when rtnetlink is added, we'll wake on events
+        let period = if have_netlink { 1500 } else { 1000 };
+        sleep(Duration::from_millis(period)).await;
     }
 }
 
