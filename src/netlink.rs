@@ -1,6 +1,8 @@
 use crate::interfaces::update_interfaces_block;
 use crate::ovs;
 use crate::naming::render_template;
+use crate::ledger::Ledger;
+use crate::link;
 use anyhow::{Context, Result};
 use log::{info, warn};
 use std::{collections::BTreeSet, path::PathBuf};
@@ -11,11 +13,22 @@ pub async fn monitor_links(
     include_prefixes: Vec<String>,
     interfaces_path: String,
     managed_tag: String,
+    enable_rename: bool,
+    naming_template: String,
+    ledger_path: String,
 ) -> Result<()> {
     let interfaces_path = PathBuf::from(interfaces_path);
 
     loop {
-        if let Err(err) = reconcile_once(&bridge, &include_prefixes, &interfaces_path, &managed_tag) {
+        if let Err(err) = reconcile_once(
+            &bridge,
+            &include_prefixes,
+            &interfaces_path,
+            &managed_tag,
+            enable_rename,
+            &naming_template,
+            &ledger_path,
+        ) {
             warn!("reconcile failed: {err:?}");
         }
         // TODO: replace with inotify/netlink subscription; for now, periodic scan
@@ -28,11 +41,37 @@ fn reconcile_once(
     include_prefixes: &[String],
     interfaces_path: &PathBuf,
     managed_tag: &str,
+    enable_rename: bool,
+    naming_template: &str,
+    ledger_path: &str,
 ) -> Result<()> {
     // Desired: all interfaces in /sys/class/net matching prefixes
     let desired_raw = list_sys_class_net(include_prefixes)?;
-    // Future: rename to template, track mapping. For now, use raw names.
-    let desired = desired_raw;
+    // Optionally rename to template
+    let mut desired = BTreeSet::new();
+    for raw in desired_raw.iter() {
+        let target = if enable_rename {
+            // naive index=0 until container index is resolved
+            render_template(naming_template, raw, 0)
+        } else {
+            raw.clone()
+        };
+        if enable_rename && *raw != target {
+            if !link::exists(&target) {
+                if let Err(e) = link::rename_safely(raw, &target) {
+                    warn!("rename {raw} -> {target} failed: {e:?}");
+                } else {
+                    // ledger rename
+                    let mut lg = Ledger::open(PathBuf::from(ledger_path))?;
+                    let _ = lg.append(
+                        "rename",
+                        serde_json::json!({"old": raw, "new": target, "bridge": bridge}),
+                    );
+                }
+            }
+        }
+        desired.insert(target);
+    }
 
     // Existing: OVS ports on the bridge matching prefixes
     let existing = ovs::list_ports(bridge).unwrap_or_default();
@@ -50,9 +89,13 @@ fn reconcile_once(
 
     for name in to_add.iter() {
         let _ = ovs::add_port(bridge, name).with_context(|| format!("adding port {name}"))?;
+        let mut lg = Ledger::open(PathBuf::from(ledger_path))?;
+        let _ = lg.append("ovs_add_port", serde_json::json!({"port": name, "bridge": bridge}));
     }
     for name in to_del.iter() {
         let _ = ovs::del_port(bridge, name).with_context(|| format!("deleting port {name}"))?;
+        let mut lg = Ledger::open(PathBuf::from(ledger_path))?;
+        let _ = lg.append("ovs_del_port", serde_json::json!({"port": name, "bridge": bridge}));
     }
 
     // Write bounded block for visibility in Proxmox

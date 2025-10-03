@@ -12,6 +12,7 @@ pub struct Config {
     pub naming_template: String,
     pub container_name_cmd: Option<String>,
     pub ledger_path: String,
+    pub enable_rename: bool,
 }
 
 impl Default for Config {
@@ -25,6 +26,7 @@ impl Default for Config {
             naming_template: "veth-{container}-eth{index}".to_string(),
             container_name_cmd: None,
             ledger_path: "/var/lib/ovs-port-agent/ledger.jsonl".to_string(),
+            enable_rename: false,
         }
     }
 }

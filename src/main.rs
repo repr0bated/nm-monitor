@@ -6,6 +6,7 @@ mod interfaces;
 mod netlink;
 mod rpc;
 mod ledger;
+mod link;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -65,16 +66,28 @@ async fn run_agent(cfg: config::Config) -> Result<()> {
     info!("starting ovs-port-agent on bridge {}", cfg.bridge_name);
 
     // Start D-Bus service (best-effort)
-    let _rpc_handle = tokio::spawn(rpc::serve());
+    let state = rpc::AppState { bridge: cfg.bridge_name.clone(), ledger_path: cfg.ledger_path.clone() };
+    let _rpc_handle = tokio::spawn(rpc::serve_with_state(state));
 
     // Start link monitor (best-effort). For now, periodic reconcile.
     let bridge = cfg.bridge_name.clone();
     let include_prefixes = cfg.include_prefixes.clone();
     let interfaces_path = cfg.interfaces_path.clone();
     let managed_tag = cfg.managed_block_tag.clone();
+    let enable_rename = cfg.enable_rename;
+    let naming_template = cfg.naming_template.clone();
+    let ledger_path = cfg.ledger_path.clone();
 
     let monitor_handle = tokio::spawn(async move {
-        if let Err(err) = netlink::monitor_links(bridge, include_prefixes, interfaces_path, managed_tag).await {
+        if let Err(err) = netlink::monitor_links(
+            bridge,
+            include_prefixes,
+            interfaces_path,
+            managed_tag,
+            enable_rename,
+            naming_template,
+            ledger_path,
+        ).await {
             error!("link monitor exited with error: {err:?}");
         }
     });
