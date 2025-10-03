@@ -30,6 +30,11 @@ pub async fn monitor_links(
     let debounce = Duration::from_millis(500);
     let mut last_fire = Instant::now() - debounce;
 
+    // Ensure bridge exists
+    if let Err(err) = crate::ovs::ensure_bridge(&bridge) {
+        warn!("failed to ensure bridge {}: {err:?}", bridge);
+    }
+
     // Initial reconcile
     if let Err(err) = reconcile_once(
         &bridge,
