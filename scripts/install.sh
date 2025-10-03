@@ -88,6 +88,8 @@ if ! ovs-vsctl br-exists "${BRIDGE}"; then
   echo "Creating OVS bridge ${BRIDGE}"
   ovs-vsctl add-br "${BRIDGE}"
 fi
+# Ensure STP/RSTP are disabled on the bridge
+ovs-vsctl set Bridge "${BRIDGE}" stp_enable=false rstp_enable=false || true
 
 # If NetworkManager is present, create NM connections for the bridge/uplink
 if command -v nmcli >/dev/null 2>&1; then
@@ -126,6 +128,8 @@ if [[ "$WITH_OVSBR1" == 1 ]]; then
     echo "Creating OVS bridge ovsbr1"
     ovs-vsctl add-br ovsbr1
   fi
+  # Ensure STP/RSTP are disabled on ovsbr1
+  ovs-vsctl set Bridge ovsbr1 stp_enable=false rstp_enable=false || true
   if command -v nmcli >/dev/null 2>&1; then
     echo "Configuring NetworkManager connection for ovsbr1 (bridge + ovs-interface)"
     if ! nmcli -t -f NAME c show | grep -qx "ovsbr1"; then
