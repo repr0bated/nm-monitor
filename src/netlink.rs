@@ -4,10 +4,10 @@ use crate::naming::render_template;
 use crate::ledger::Ledger;
 use crate::link;
 use anyhow::{Context, Result};
-use log::{debug, info, warn};
+use log::{info, warn};
 use std::{collections::BTreeSet, path::PathBuf};
 use tokio::time::{sleep, Duration, Instant};
-use std::fs;
+// use std::fs; // reserved for future inotify
 use rtnetlink::{new_connection};
 use futures_util::TryStreamExt;
 

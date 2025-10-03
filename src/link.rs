@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use std::process::Command;
-use std::fs;
+// use std::fs; // reserved for future /proc scanning
 
 /// Try to resolve a container short name for an interface by peeking into /proc and network namespaces.
 /// Best-effort heuristic:

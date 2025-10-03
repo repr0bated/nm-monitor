@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Always run from repo root
+SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
+cd "$REPO_ROOT"
+
 # Usage: ./scripts/install.sh [--bridge ovsbr0] [--with-ovsbr1] [--system]
 # - Installs ovs-port-agent binary, config, and systemd unit
 # - Optionally creates an empty OVS bridge ovsbr1
@@ -26,11 +31,9 @@ done
 command -v ovs-vsctl >/dev/null || { echo "ERROR: ovs-vsctl not found"; exit 2; }
 command -v install >/dev/null || { echo "ERROR: install not found"; exit 2; }
 
-# Build if binary missing
-if [[ ! -x target/release/ovs-port-agent ]]; then
-  echo "Building release binary..."
-  cargo build --release
-fi
+# Build release binary
+echo "Building release binary..."
+cargo build --release
 
 echo "Installing binary to ${PREFIX}/bin";
 install -m 0755 target/release/ovs-port-agent "${PREFIX}/bin/"
