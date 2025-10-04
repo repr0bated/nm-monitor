@@ -1,5 +1,6 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use std::process::Command;
+use log::{info, debug, warn};
 
 pub fn list_connection_names() -> Result<Vec<String>> {
     let output = Command::new("nmcli").args(["-t", "-f", "NAME", "c", "show"]).output()
@@ -21,24 +22,164 @@ pub fn ensure_dynamic_port(bridge: &str, ifname: &str) -> Result<()> {
     let port_name = format!("dyn-port-{ifname}");
     let eth_name = eth_conn_name(ifname);
 
-    // ovs-port
-    let _ = Command::new("nmcli").args(["-t", "-f", "NAME", "c", "show", &port_name]).status();
-    // Create or modify master relationship
-    let _ = Command::new("nmcli").args(["c", "add", "type", "ovs-port", "con-name", &port_name, "ifname", ifname]).status();
-    let _ = Command::new("nmcli").args(["c", "modify", &port_name, "connection.master", bridge, "connection.slave-type", "ovs-bridge"]).status();
+    info!("Ensuring dynamic OVS port {} on bridge {} for interface {}", port_name, bridge, ifname);
 
-    // ethernet slave
-    let _ = Command::new("nmcli").args(["c", "add", "type", "ethernet", "con-name", &eth_name, "ifname", ifname]).status();
-    let _ = Command::new("nmcli").args(["c", "modify", &eth_name, "connection.master", &port_name, "connection.slave-type", "ovs-port"]).status();
-    let _ = Command::new("nmcli").args(["-w", "5", "c", "up", &eth_name]).status();
+    // Check if port already exists
+    let exists = connection_exists(&port_name)?;
+    
+    if !exists {
+        // Create OVS port according to NetworkManager documentation
+        debug!("Creating new OVS port {}", port_name);
+        
+        let output = Command::new("nmcli")
+            .args([
+                "connection", "add",
+                "type", "ovs-port",
+                "con-name", &port_name,
+                "ifname", ifname,
+                "connection.master", bridge,
+                "connection.slave-type", "ovs-bridge",
+                "connection.autoconnect", "yes",
+                "connection.autoconnect-priority", "50",
+            ])
+            .output()
+            .context("Failed to create OVS port")?;
+        
+        if !output.status.success() {
+            bail!("Failed to create OVS port {}: {}", port_name, String::from_utf8_lossy(&output.stderr));
+        }
+    } else {
+        // Modify existing connection to ensure correct settings
+        debug!("Modifying existing OVS port {}", port_name);
+        
+        let output = Command::new("nmcli")
+            .args([
+                "connection", "modify", &port_name,
+                "connection.master", bridge,
+                "connection.slave-type", "ovs-bridge",
+                "connection.autoconnect", "yes",
+                "connection.autoconnect-priority", "50",
+            ])
+            .output()
+            .context("Failed to modify OVS port")?;
+        
+        if !output.status.success() {
+            warn!("Failed to modify OVS port {}: {}", port_name, String::from_utf8_lossy(&output.stderr));
+        }
+    }
+
+    // Handle ethernet slave connection
+    let eth_exists = connection_exists(&eth_name)?;
+    
+    if !eth_exists {
+        debug!("Creating ethernet slave {}", eth_name);
+        
+        let output = Command::new("nmcli")
+            .args([
+                "connection", "add",
+                "type", "ethernet",
+                "con-name", &eth_name,
+                "ifname", ifname,
+                "connection.master", &port_name,
+                "connection.slave-type", "ovs-port",
+                "connection.autoconnect", "yes",
+                "connection.autoconnect-priority", "45",
+                "802-3-ethernet.auto-negotiate", "yes",
+            ])
+            .output()
+            .context("Failed to create ethernet slave")?;
+        
+        if !output.status.success() {
+            bail!("Failed to create ethernet slave {}: {}", eth_name, String::from_utf8_lossy(&output.stderr));
+        }
+    } else {
+        debug!("Modifying existing ethernet slave {}", eth_name);
+        
+        let output = Command::new("nmcli")
+            .args([
+                "connection", "modify", &eth_name,
+                "connection.master", &port_name,
+                "connection.slave-type", "ovs-port",
+                "connection.autoconnect", "yes",
+                "connection.autoconnect-priority", "45",
+            ])
+            .output()
+            .context("Failed to modify ethernet slave")?;
+        
+        if !output.status.success() {
+            warn!("Failed to modify ethernet slave {}: {}", eth_name, String::from_utf8_lossy(&output.stderr));
+        }
+    }
+
+    // Activate the ethernet connection (NetworkManager will handle the port activation atomically)
+    debug!("Activating ethernet connection {}", eth_name);
+    
+    let output = Command::new("nmcli")
+        .args(["-w", "10", "connection", "up", &eth_name])
+        .output()
+        .context("Failed to activate ethernet connection")?;
+    
+    if !output.status.success() {
+        warn!("Failed to activate ethernet connection {}: {}", eth_name, String::from_utf8_lossy(&output.stderr));
+        // Not fatal - connection might already be active
+    }
+    
+    info!("Successfully ensured dynamic port {} on bridge {}", ifname, bridge);
     Ok(())
+}
+
+fn connection_exists(name: &str) -> Result<bool> {
+    let output = Command::new("nmcli")
+        .args(["-t", "-f", "NAME", "connection", "show", name])
+        .output()
+        .context("Failed to check connection existence")?;
+    
+    Ok(output.status.success())
 }
 
 pub fn remove_dynamic_port(ifname: &str) -> Result<()> {
     let port_name = format!("dyn-port-{ifname}");
     let eth_name = eth_conn_name(ifname);
-    let _ = Command::new("nmcli").args(["c", "down", &eth_name]).status();
-    let _ = Command::new("nmcli").args(["c", "delete", &eth_name]).status();
-    let _ = Command::new("nmcli").args(["c", "delete", &port_name]).status();
+    
+    info!("Removing dynamic OVS port {} for interface {}", port_name, ifname);
+    
+    // Deactivate ethernet connection first (this will deactivate the port as well)
+    if connection_exists(&eth_name)? {
+        debug!("Deactivating ethernet connection {}", eth_name);
+        let output = Command::new("nmcli")
+            .args(["connection", "down", &eth_name])
+            .output()
+            .context("Failed to deactivate ethernet connection")?;
+        
+        if !output.status.success() {
+            warn!("Failed to deactivate {}: {}", eth_name, String::from_utf8_lossy(&output.stderr));
+        }
+        
+        // Delete ethernet connection
+        debug!("Deleting ethernet connection {}", eth_name);
+        let output = Command::new("nmcli")
+            .args(["connection", "delete", &eth_name])
+            .output()
+            .context("Failed to delete ethernet connection")?;
+        
+        if !output.status.success() {
+            warn!("Failed to delete {}: {}", eth_name, String::from_utf8_lossy(&output.stderr));
+        }
+    }
+    
+    // Delete OVS port connection
+    if connection_exists(&port_name)? {
+        debug!("Deleting OVS port {}", port_name);
+        let output = Command::new("nmcli")
+            .args(["connection", "delete", &port_name])
+            .output()
+            .context("Failed to delete OVS port")?;
+        
+        if !output.status.success() {
+            warn!("Failed to delete {}: {}", port_name, String::from_utf8_lossy(&output.stderr));
+        }
+    }
+    
+    info!("Successfully removed dynamic port for interface {}", ifname);
     Ok(())
 }
