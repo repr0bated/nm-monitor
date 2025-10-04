@@ -6,6 +6,7 @@ mod netlink;
 mod rpc;
 mod ledger;
 mod link;
+mod nm_bridge;
 mod nmcli_dyn;
 
 use anyhow::Result;
