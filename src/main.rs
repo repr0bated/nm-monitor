@@ -7,6 +7,7 @@ mod netlink;
 mod rpc;
 mod ledger;
 mod link;
+mod nmcli_dyn;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};

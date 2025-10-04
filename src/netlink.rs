@@ -1,5 +1,5 @@
 use crate::interfaces::update_interfaces_block;
-use crate::ovs;
+use crate::nmcli_dyn;
 use crate::naming::render_template;
 use crate::ledger::Ledger;
 use crate::link;
@@ -29,11 +29,6 @@ pub async fn monitor_links(
     // Debounce window
     let debounce = Duration::from_millis(500);
     let mut last_fire = Instant::now() - debounce;
-
-    // Ensure bridge exists
-    if let Err(err) = crate::ovs::ensure_bridge(&bridge) {
-        warn!("failed to ensure bridge {}: {err:?}", bridge);
-    }
 
     // Initial reconcile
     if let Err(err) = reconcile_once(
@@ -113,11 +108,12 @@ fn reconcile_once(
         desired.insert(target);
     }
 
-    // Existing: OVS ports on the bridge matching prefixes
-    let existing = ovs::list_ports(bridge).unwrap_or_default();
-    let existing_filtered: BTreeSet<String> = existing
-        .into_iter()
-        .filter(|n| include_prefixes.iter().any(|p| n.starts_with(p)))
+    // Existing: NM dynamic ports present (by our naming convention)
+    let existing_conns = nmcli_dyn::list_connection_names().unwrap_or_default();
+    let existing_filtered: BTreeSet<String> = desired_raw
+        .iter()
+        .filter(|ifn| existing_conns.contains(&nmcli_dyn::eth_conn_name(ifn)))
+        .cloned()
         .collect();
 
     let to_add: BTreeSet<_> = desired.difference(&existing_filtered).cloned().collect();
@@ -128,14 +124,16 @@ fn reconcile_once(
     }
 
     for name in to_add.iter() {
-        let _ = ovs::add_port(bridge, name).with_context(|| format!("adding port {name}"))?;
+        nmcli_dyn::ensure_dynamic_port(&bridge, name)
+            .with_context(|| format!("nmcli add dyn port for {name}"))?;
         let mut lg = Ledger::open(PathBuf::from(ledger_path))?;
-        let _ = lg.append("ovs_add_port", serde_json::json!({"port": name, "bridge": bridge}));
+        let _ = lg.append("nm_add_dyn_port", serde_json::json!({"port": name, "bridge": bridge}));
     }
     for name in to_del.iter() {
-        let _ = ovs::del_port(bridge, name).with_context(|| format!("deleting port {name}"))?;
+        nmcli_dyn::remove_dynamic_port(name)
+            .with_context(|| format!("nmcli remove dyn port for {name}"))?;
         let mut lg = Ledger::open(PathBuf::from(ledger_path))?;
-        let _ = lg.append("ovs_del_port", serde_json::json!({"port": name, "bridge": bridge}));
+        let _ = lg.append("nm_del_dyn_port", serde_json::json!({"port": name, "bridge": bridge}));
     }
 
     // Write bounded block for visibility in Proxmox
