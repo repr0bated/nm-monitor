@@ -83,13 +83,14 @@ else
   echo "Unit installed. Start with: systemctl enable --now ovs-port-agent"
 fi
 
-# Create base bridge if missing
-if ! ovs-vsctl br-exists "${BRIDGE}"; then
-  echo "Creating OVS bridge ${BRIDGE}"
-  ovs-vsctl add-br "${BRIDGE}"
+# Create base bridge via NetworkManager; disable STP/RSTP per docs
+echo "Ensuring OVS bridge ${BRIDGE} via NetworkManager"
+if ! nmcli -t -f NAME c show | grep -qx "${BRIDGE}"; then
+  nmcli c add type ovs-bridge con-name "${BRIDGE}" ifname "${BRIDGE}" \
+    ovs-bridge.stp no ovs-bridge.rstp no
+else
+  nmcli c modify "${BRIDGE}" ovs-bridge.stp no ovs-bridge.rstp no || true
 fi
-# Ensure STP/RSTP are disabled on the bridge
-ovs-vsctl set Bridge "${BRIDGE}" stp_enable=false rstp_enable=false || true
 
 # If NetworkManager is present, create NM connections for the bridge/uplink
 if command -v nmcli >/dev/null 2>&1; then
@@ -97,19 +98,22 @@ if command -v nmcli >/dev/null 2>&1; then
   if ! nmcli -t -f NAME c show | grep -qx "${BRIDGE}"; then
     nmcli c add type ovs-bridge con-name "${BRIDGE}" ifname "${BRIDGE}"
   fi
+  nmcli c modify "${BRIDGE}" connection.autoconnect yes connection.autoconnect-priority 100 || true
   INT_PORT_NAME="${BRIDGE}-port-int"
   if ! nmcli -t -f NAME c show | grep -qx "${INT_PORT_NAME}"; then
-    nmcli c add type ovs-port con-name "${INT_PORT_NAME}" ifname "${BRIDGE}"
-    nmcli c modify "${INT_PORT_NAME}" connection.master "${BRIDGE}" connection.slave-type ovs-bridge
+    nmcli c add type ovs-port con-name "${INT_PORT_NAME}" ifname "${BRIDGE}" \
+      connection.controller "${BRIDGE}" connection.controller-type ovs-bridge
   else
-    nmcli c modify "${INT_PORT_NAME}" connection.master "${BRIDGE}" connection.slave-type ovs-bridge || true
+    nmcli c modify "${INT_PORT_NAME}" connection.controller "${BRIDGE}" connection.controller-type ovs-bridge || true
   fi
+  nmcli c modify "${INT_PORT_NAME}" connection.autoconnect yes connection.autoconnect-priority 95 || true
   if ! nmcli -t -f NAME c show | grep -qx "${BRIDGE}-if"; then
-    nmcli c add type ovs-interface con-name "${BRIDGE}-if" ifname "${BRIDGE}"
-    nmcli c modify "${BRIDGE}-if" connection.master "${INT_PORT_NAME}" connection.slave-type ovs-port
+    nmcli c add type ovs-interface con-name "${BRIDGE}-if" ifname "${BRIDGE}" \
+      connection.controller "${INT_PORT_NAME}" connection.controller-type ovs-port
   else
-    nmcli c modify "${BRIDGE}-if" connection.master "${INT_PORT_NAME}" connection.slave-type ovs-port || true
+    nmcli c modify "${BRIDGE}-if" connection.controller "${INT_PORT_NAME}" connection.controller-type ovs-port || true
   fi
+  nmcli c modify "${BRIDGE}-if" connection.autoconnect yes connection.autoconnect-priority 95 || true
   if [[ -n "${NM_IP}" ]]; then
     nmcli c modify "${BRIDGE}-if" ipv4.method manual ipv4.addresses "${NM_IP}" ipv6.method disabled || true
     if [[ -n "${NM_GW}" ]]; then
@@ -119,50 +123,63 @@ if command -v nmcli >/dev/null 2>&1; then
   if [[ -n "${UPLINK}" ]]; then
     PORT_NAME="${BRIDGE}-port-${UPLINK}"
     if ! nmcli -t -f NAME c show | grep -qx "${PORT_NAME}"; then
-      nmcli c add type ovs-port con-name "${PORT_NAME}" ifname "${UPLINK}"
-      nmcli c modify "${PORT_NAME}" connection.master "${BRIDGE}" connection.slave-type ovs-bridge
+      nmcli c add type ovs-port con-name "${PORT_NAME}" ifname "${UPLINK}" \
+        connection.controller "${BRIDGE}" connection.controller-type ovs-bridge
     else
-      nmcli c modify "${PORT_NAME}" connection.master "${BRIDGE}" connection.slave-type ovs-bridge || true
+      nmcli c modify "${PORT_NAME}" connection.controller "${BRIDGE}" connection.controller-type ovs-bridge || true
     fi
+    nmcli c modify "${PORT_NAME}" connection.autoconnect yes connection.autoconnect-priority 90 || true
+
+    # Migrate an existing active wired profile on the uplink to be a slave
+    ACTIVE_WIRED_NAME=$(nmcli -t -f NAME,DEVICE,TYPE,ACTIVE c show --active | awk -F: -v dev="${UPLINK}" '$2==dev && $3=="802-3-ethernet" && $4=="yes" {print $1; exit}')
     ETH_NAME="${BRIDGE}-uplink-${UPLINK}"
-    if ! nmcli -t -f NAME c show | grep -qx "${ETH_NAME}"; then
-      nmcli c add type ethernet con-name "${ETH_NAME}" ifname "${UPLINK}"
-      nmcli c modify "${ETH_NAME}" connection.master "${PORT_NAME}" connection.slave-type ovs-port
+    if [[ -n "${ACTIVE_WIRED_NAME}" ]]; then
+      nmcli c modify "${ACTIVE_WIRED_NAME}" connection.controller "${PORT_NAME}" connection.controller-type ovs-port || true
+      nmcli c modify "${ACTIVE_WIRED_NAME}" connection.autoconnect-priority 90 connection.autoconnect yes || true
+      # Optionally rename to our convention
+      nmcli c modify "${ACTIVE_WIRED_NAME}" connection.id "${ETH_NAME}" || true
     else
-      nmcli c modify "${ETH_NAME}" connection.master "${PORT_NAME}" connection.slave-type ovs-port || true
+      if ! nmcli -t -f NAME c show | grep -qx "${ETH_NAME}"; then
+        nmcli c add type ethernet con-name "${ETH_NAME}" ifname "${UPLINK}"
+      fi
+      nmcli c modify "${ETH_NAME}" connection.controller "${PORT_NAME}" connection.controller-type ovs-port || true
+      nmcli c modify "${ETH_NAME}" connection.autoconnect yes connection.autoconnect-priority 90 || true
     fi
   fi
-  nmcli -w 15 c up "${BRIDGE}" || true
-  nmcli -w 15 c up "${INT_PORT_NAME}" || true
-  nmcli -w 15 c up "${BRIDGE}-if" || true
+  # Activate the bridge only; NM will bring up slaves atomically
+  nmcli -w 30 c up "${BRIDGE}" || true
 fi
 
 # Optionally create ovsbr1
 if [[ "$WITH_OVSBR1" == 1 ]]; then
-  if ! ovs-vsctl br-exists ovsbr1; then
-    echo "Creating OVS bridge ovsbr1"
-    ovs-vsctl add-br ovsbr1
+  echo "Ensuring OVS bridge ovsbr1 via NetworkManager"
+  if ! nmcli -t -f NAME c show | grep -qx "ovsbr1"; then
+    nmcli c add type ovs-bridge con-name "ovsbr1" ifname "ovsbr1" \
+      ovs-bridge.stp no ovs-bridge.rstp no
+  else
+    nmcli c modify "ovsbr1" ovs-bridge.stp no ovs-bridge.rstp no || true
   fi
-  # Ensure STP/RSTP are disabled on ovsbr1
-  ovs-vsctl set Bridge ovsbr1 stp_enable=false rstp_enable=false || true
   if command -v nmcli >/dev/null 2>&1; then
     echo "Configuring NetworkManager connection for ovsbr1 (bridge + internal port + ovs-interface)"
     if ! nmcli -t -f NAME c show | grep -qx "ovsbr1"; then
       nmcli c add type ovs-bridge con-name "ovsbr1" ifname "ovsbr1"
     fi
+    nmcli c modify "ovsbr1" connection.autoconnect yes connection.autoconnect-priority 100 || true
     OVSBR1_INT_PORT_NAME="ovsbr1-port-int"
     if ! nmcli -t -f NAME c show | grep -qx "${OVSBR1_INT_PORT_NAME}"; then
-      nmcli c add type ovs-port con-name "${OVSBR1_INT_PORT_NAME}" ifname "ovsbr1"
-      nmcli c modify "${OVSBR1_INT_PORT_NAME}" connection.master "ovsbr1" connection.slave-type ovs-bridge
+      nmcli c add type ovs-port con-name "${OVSBR1_INT_PORT_NAME}" ifname "ovsbr1" \
+        connection.controller "ovsbr1" connection.controller-type ovs-bridge
     else
-      nmcli c modify "${OVSBR1_INT_PORT_NAME}" connection.master "ovsbr1" connection.slave-type ovs-bridge || true
+      nmcli c modify "${OVSBR1_INT_PORT_NAME}" connection.controller "ovsbr1" connection.controller-type ovs-bridge || true
     fi
+    nmcli c modify "${OVSBR1_INT_PORT_NAME}" connection.autoconnect yes connection.autoconnect-priority 95 || true
     if ! nmcli -t -f NAME c show | grep -qx "ovsbr1-if"; then
-      nmcli c add type ovs-interface con-name "ovsbr1-if" ifname "ovsbr1"
-      nmcli c modify "ovsbr1-if" connection.master "${OVSBR1_INT_PORT_NAME}" connection.slave-type ovs-port
+      nmcli c add type ovs-interface con-name "ovsbr1-if" ifname "ovsbr1" \
+        connection.controller "${OVSBR1_INT_PORT_NAME}" connection.controller-type ovs-port
     else
-      nmcli c modify "ovsbr1-if" connection.master "${OVSBR1_INT_PORT_NAME}" connection.slave-type ovs-port || true
+      nmcli c modify "ovsbr1-if" connection.controller "${OVSBR1_INT_PORT_NAME}" connection.controller-type ovs-port || true
     fi
+    nmcli c modify "ovsbr1-if" connection.autoconnect yes connection.autoconnect-priority 95 || true
     if [[ -n "${OVSBR1_IP}" ]]; then
       nmcli c modify "ovsbr1-if" ipv4.method manual ipv4.addresses "${OVSBR1_IP}" ipv6.method disabled || true
       if [[ -n "${OVSBR1_GW}" ]]; then
@@ -172,22 +189,28 @@ if [[ "$WITH_OVSBR1" == 1 ]]; then
     if [[ -n "${OVSBR1_UPLINK}" ]]; then
       PORT_NAME="ovsbr1-port-${OVSBR1_UPLINK}"
       if ! nmcli -t -f NAME c show | grep -qx "${PORT_NAME}"; then
-        nmcli c add type ovs-port con-name "${PORT_NAME}" ifname "${OVSBR1_UPLINK}"
-        nmcli c modify "${PORT_NAME}" connection.master "ovsbr1" connection.slave-type ovs-bridge
+        nmcli c add type ovs-port con-name "${PORT_NAME}" ifname "${OVSBR1_UPLINK}" \
+          connection.controller "ovsbr1" connection.controller-type ovs-bridge
       else
-        nmcli c modify "${PORT_NAME}" connection.master "ovsbr1" connection.slave-type ovs-bridge || true
+        nmcli c modify "${PORT_NAME}" connection.controller "ovsbr1" connection.controller-type ovs-bridge || true
       fi
+      nmcli c modify "${PORT_NAME}" connection.autoconnect yes connection.autoconnect-priority 90 || true
+
+      ACTIVE_WIRED_NAME=$(nmcli -t -f NAME,DEVICE,TYPE,ACTIVE c show --active | awk -F: -v dev="${OVSBR1_UPLINK}" '$2==dev && $3=="802-3-ethernet" && $4=="yes" {print $1; exit}')
       ETH_NAME="ovsbr1-uplink-${OVSBR1_UPLINK}"
-      if ! nmcli -t -f NAME c show | grep -qx "${ETH_NAME}"; then
-        nmcli c add type ethernet con-name "${ETH_NAME}" ifname "${OVSBR1_UPLINK}"
-        nmcli c modify "${ETH_NAME}" connection.master "${PORT_NAME}" connection.slave-type ovs-port
+      if [[ -n "${ACTIVE_WIRED_NAME}" ]]; then
+        nmcli c modify "${ACTIVE_WIRED_NAME}" connection.controller "${PORT_NAME}" connection.controller-type ovs-port || true
+        nmcli c modify "${ACTIVE_WIRED_NAME}" connection.autoconnect-priority 90 connection.autoconnect yes || true
+        nmcli c modify "${ACTIVE_WIRED_NAME}" connection.id "${ETH_NAME}" || true
       else
-        nmcli c modify "${ETH_NAME}" connection.master "${PORT_NAME}" connection.slave-type ovs-port || true
+        if ! nmcli -t -f NAME c show | grep -qx "${ETH_NAME}"; then
+          nmcli c add type ethernet con-name "${ETH_NAME}" ifname "${OVSBR1_UPLINK}"
+        fi
+        nmcli c modify "${ETH_NAME}" connection.controller "${PORT_NAME}" connection.controller-type ovs-port || true
+        nmcli c modify "${ETH_NAME}" connection.autoconnect yes connection.autoconnect-priority 90 || true
       fi
     fi
-    nmcli -w 15 c up "ovsbr1" || true
-    nmcli -w 15 c up "${OVSBR1_INT_PORT_NAME}" || true
-    nmcli -w 15 c up "ovsbr1-if" || true
+    nmcli -w 30 c up "ovsbr1" || true
   fi
 fi
 
