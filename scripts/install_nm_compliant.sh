@@ -91,8 +91,8 @@ cleanup_existing_connections() {
     
     log_info "Checking for existing connections..."
     
-    # Find all connections related to this bridge
-    local related_conns=$(nmcli -t -f NAME,TYPE connection show | grep -E "(^${bridge_name}[:-]|^${bridge_name}$)" | cut -d: -f1)
+    # Find all connections related to this bridge (including auto-generated names)
+    local related_conns=$(nmcli -t -f NAME,TYPE connection show | grep -E "(^${bridge_name}[:-]|^${bridge_name}$|^ovs-.*${bridge_name}|^ovs-.*port[01]|^ovs-.*iface0)" | cut -d: -f1)
     
     if [[ -n "$related_conns" ]]; then
         log_warn "Found existing connections that may conflict:"
@@ -129,18 +129,25 @@ create_ovs_bridge() {
     
     log_info "Creating OVS bridge $bridge_name"
     
-    # Check if bridge connection already exists
-    if nmcli -t -f NAME connection show "$bridge_name" >/dev/null 2>&1; then
-        log_info "Bridge connection $bridge_name already exists, deleting for clean recreation"
-        nmcli connection delete "$bridge_name" 2>/dev/null || true
-    fi
+    # Check if bridge connection already exists (check both possible names)
+    for conn_name in "$bridge_name" "ovs-bridge-$bridge_name"; do
+        if nmcli -t -f NAME connection show "$conn_name" >/dev/null 2>&1; then
+            log_info "Bridge connection $conn_name already exists, deleting for clean recreation"
+            nmcli connection delete "$conn_name" 2>/dev/null || true
+        fi
+    done
     
     # Create new OVS bridge connection
     # Following NetworkManager documentation Example 20 EXACTLY
+    # Note: NetworkManager auto-generates the connection name as ovs-bridge-<interface>
     nmcli conn add type ovs-bridge conn.interface "$bridge_name" || {
         log_error "Failed to create bridge $bridge_name"
         return 1
     }
+    
+    # The actual connection name will be ovs-bridge-$bridge_name
+    local actual_bridge_conn="ovs-bridge-$bridge_name"
+    log_info "Bridge connection created as: $actual_bridge_conn"
     
     log_info "OVS bridge $bridge_name configured"
 }
@@ -319,39 +326,38 @@ activate_bridge() {
         }
     fi
     
-    # Make sure slaves are ready
-    log_info "Ensuring slave connections are ready..."
+    # Make sure controlled connections are ready
+    log_info "Ensuring controlled connections are ready..."
     
-    # The slaves should auto-activate with the bridge, but let's make sure they're configured properly
-    local port_name="${bridge_name}-port-int"
-    local if_name="${bridge_name}-if"
+    # Check for the connections created per documentation
+    # NetworkManager auto-generates names like ovs-port-port0, ovs-interface-iface0
+    local port_conn="ovs-port-port0"
+    local if_conn="ovs-interface-iface0"
     
-    # Check if the connections exist and are properly configured
-    if nmcli connection show "$port_name" >/dev/null 2>&1; then
-        log_info "Port connection $port_name exists"
+    # Check if the connections exist
+    if nmcli connection show "$port_conn" >/dev/null 2>&1; then
+        log_info "Port connection $port_conn exists"
     else
-        log_error "Port connection $port_name missing!"
+        log_error "Port connection $port_conn missing!"
         return 1
     fi
     
-    if nmcli connection show "$if_name" >/dev/null 2>&1; then
-        log_info "Interface connection $if_name exists"
+    if nmcli connection show "$if_conn" >/dev/null 2>&1; then
+        log_info "Interface connection $if_conn exists"
     else
-        log_error "Interface connection $if_name missing!"
+        log_error "Interface connection $if_conn missing!"
         return 1
     fi
-    
-    # First, set autoconnect on the interface now that we're ready
-    nmcli connection modify "$if_name" connection.autoconnect yes || true
     
     # Try to activate with a shorter timeout first
     log_info "Attempting to activate bridge..."
-    # Use --wait to ensure proper ordering
-    if ! nmcli --wait 10 connection up "$bridge_name" 2>&1 | tee /tmp/bridge-activation.log; then
+    # Use the auto-generated connection name
+    local bridge_conn="ovs-bridge-$bridge_name"
+    if ! nmcli --wait 10 connection up "$bridge_conn" 2>&1 | tee /tmp/bridge-activation.log; then
         log_warn "Initial activation failed, checking state..."
         
         # Check current state
-        local state=$(nmcli -t -f GENERAL.STATE connection show "$bridge_name" | cut -d: -f2)
+        local state=$(nmcli -t -f GENERAL.STATE connection show "$bridge_conn" | cut -d: -f2)
         log_info "Bridge state: $state"
         
         if [[ "$state" == "activating" ]]; then
@@ -359,7 +365,7 @@ activate_bridge() {
             sleep 5
             
             # Check again
-            state=$(nmcli -t -f GENERAL.STATE connection show "$bridge_name" | cut -d: -f2)
+            state=$(nmcli -t -f GENERAL.STATE connection show "$bridge_conn" | cut -d: -f2)
             if [[ "$state" == "activated" ]]; then
                 log_info "Bridge activated successfully"
                 return 0
@@ -368,7 +374,7 @@ activate_bridge() {
         
         # Try to diagnose the issue
         log_warn "Activation failed, diagnosing..."
-        nmcli connection show "$bridge_name" | grep -E "GENERAL|STATE|ERROR" || true
+        nmcli connection show "$bridge_conn" | grep -E "GENERAL|STATE|ERROR" || true
         
         # Check journal for errors
         log_info "Checking system logs..."
@@ -396,9 +402,10 @@ validate_bridge() {
     
     log_info "Validating OVS bridge $bridge_name topology"
     
-    # Check bridge connection
-    if ! nmcli -t -f NAME,STATE connection show "$bridge_name" | grep -q ":activated$"; then
-        log_error "Bridge $bridge_name is not active"
+    # Check bridge connection (using auto-generated name)
+    local bridge_conn="ovs-bridge-$bridge_name"
+    if ! nmcli -t -f NAME,STATE connection show "$bridge_conn" | grep -q ":activated$"; then
+        log_error "Bridge connection $bridge_conn is not active"
         return 1
     fi
     
