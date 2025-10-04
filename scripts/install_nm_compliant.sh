@@ -559,8 +559,13 @@ main() {
         sleep 2
     fi
     
-    # Create primary bridge
+    # Create ALL components before ANY activation
+    log_info "Creating complete bridge configuration..."
+    
+    # Create bridge
     create_ovs_bridge "$BRIDGE"
+    
+    # Create internal port and interface
     create_internal_port "$BRIDGE"
     
     # Configure IP if provided
@@ -568,13 +573,12 @@ main() {
         configure_ip_address "${BRIDGE}-if" "$NM_IP" "$NM_GW"
     fi
     
-    # Add uplink BEFORE activation if provided
+    # Create uplink port and enslaved interface if provided
     if [[ -n "$UPLINK" ]]; then
-        log_info "Adding uplink $UPLINK before bridge activation"
         create_uplink_port "$BRIDGE" "$UPLINK"
     fi
     
-    # NOW activate bridge with all components ready
+    # NOW activate bridge - NetworkManager will handle all slaves atomically
     activate_bridge "$BRIDGE"
     validate_bridge "$BRIDGE"
     
