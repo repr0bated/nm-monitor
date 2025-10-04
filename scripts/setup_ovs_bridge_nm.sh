@@ -49,6 +49,37 @@ IP_ADDRESSES=""
 IP_GATEWAY=""
 IP_DNS=""
 
+# First, check ALL active connections to ensure safety
+log_info "Checking all active network connections..."
+nmcli -t -f NAME,DEVICE,TYPE,STATE connection show --active | grep ":activated$" | while IFS=: read -r name device type state; do
+    if [[ "$type" == "802-3-ethernet" || "$type" == "802-11-wireless" ]]; then
+        local ip=$(nmcli -t -f IP4.ADDRESS connection show "$name" | cut -d: -f2 | cut -d/ -f1)
+        log_info "  $device: $name (IP: ${ip:-none})"
+    fi
+done
+
+# Detect current SSH connection if any
+if [[ -n "$SSH_CONNECTION" ]]; then
+    local ssh_ip=$(echo "$SSH_CONNECTION" | awk '{print $3}')
+    log_warn "SSH connection detected from: $ssh_ip"
+    log_warn "Make sure you're not modifying the interface used for this connection!"
+    
+    # Try to find which interface has our SSH IP
+    local ssh_device=$(ip -4 addr show | grep "inet $ssh_ip" | awk '{print $NF}')
+    if [[ -n "$ssh_device" ]]; then
+        log_warn "SSH is using interface: $ssh_device"
+        if [[ "$ssh_device" == "$UPLINK" ]]; then
+            log_error "WARNING: You're trying to modify the interface used for SSH!"
+            log_error "This will disconnect your session!"
+            read -p "Are you SURE you want to continue? (yes/no) " -r
+            if [[ ! "$REPLY" == "yes" ]]; then
+                log_info "Aborting for safety"
+                exit 1
+            fi
+        fi
+    fi
+fi
+
 # Introspect IP configuration from uplink if present
 if [[ -n "$UPLINK" ]]; then
     log_info "Checking for active connection on $UPLINK"
@@ -75,6 +106,8 @@ if [[ -n "$UPLINK" ]]; then
             [[ -n "$IP_GATEWAY" ]] && log_info "  Gateway: $IP_GATEWAY"
             [[ -n "$IP_DNS" ]] && log_info "  DNS: $IP_DNS"
         fi
+    else
+        log_warn "No active connection found on $UPLINK"
     fi
 fi
 

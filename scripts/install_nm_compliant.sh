@@ -275,6 +275,22 @@ create_uplink_port() {
     
     log_info "Creating uplink port for interface $uplink_if on bridge $bridge_name"
     
+    # Safety check for remote systems
+    if [[ -n "${SSH_CONNECTION:-}" ]]; then
+        local ssh_device=$(ip -4 addr show | grep "inet $(echo "$SSH_CONNECTION" | awk '{print $3}')" | awk '{print $NF}')
+        if [[ "$ssh_device" == "$uplink_if" ]]; then
+            log_error "WARNING: Interface $uplink_if is being used for SSH!"
+            log_error "Modifying it will disconnect your session!"
+            if [[ "$NON_INTERACTIVE" != 1 ]]; then
+                read -p "Continue anyway? (yes/no) " -r
+                if [[ ! "$REPLY" == "yes" ]]; then
+                    log_info "Aborting for safety"
+                    return 1
+                fi
+            fi
+        fi
+    fi
+    
     # Check for active connection on uplink interface
     local active_conn=$(nmcli -t -f NAME,DEVICE,TYPE,ACTIVE connection show --active | \
         awk -F: -v dev="$uplink_if" '$2==dev && $3=="802-3-ethernet" && $4=="yes" {print $1; exit}')
