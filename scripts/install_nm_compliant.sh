@@ -145,12 +145,8 @@ create_ovs_bridge() {
         }
     else
         # Create new OVS bridge connection
-        # Following NetworkManager documentation Example 20
-        nmcli connection add \
-            type ovs-bridge \
-            conn.interface "$bridge_name" \
-            ovs-bridge.stp no \
-            ovs-bridge.rstp no || {
+        # Following NetworkManager documentation Example 20 EXACTLY
+        nmcli conn add type ovs-bridge conn.interface "$bridge_name" || {
             log_error "Failed to create bridge $bridge_name"
             return 1
         }
@@ -160,78 +156,47 @@ create_ovs_bridge() {
 }
 
 # Create internal port for bridge IP assignment
+# Following NetworkManager documentation Example 20
 create_internal_port() {
     local bridge_name="$1"
     local ip_addr="${2:-}"
     local gateway="${3:-}"
-    local port_name="${bridge_name}-port-int"
-    local if_name="$bridge_name"
+    local port_name="port0"
+    local if_name="iface0"
     
-    log_info "Creating internal port for bridge $bridge_name"
+    log_info "Creating internal port for bridge $bridge_name (following NM docs)"
     
-    # Create OVS port - always fresh with master defined from start
-    if nmcli -t -f NAME connection show "$port_name" >/dev/null 2>&1; then
-        log_info "Deleting existing port connection $port_name for clean recreation"
-        nmcli connection delete "$port_name" 2>/dev/null || true
-    fi
-    
-    nmcli connection add \
-        type ovs-port \
-        con-name "$port_name" \
-        ifname "$if_name" \
-        connection.master "$bridge_name" \
-        connection.slave-type ovs-bridge \
-        connection.autoconnect yes \
-        connection.autoconnect-priority 95 || {
+    # Step 1: Create OVS port (Example 20, line 2)
+    log_info "Creating OVS port with controller relationship"
+    nmcli conn add type ovs-port conn.interface "$port_name" controller "$bridge_name" || {
         log_error "Failed to create port $port_name"
         return 1
     }
     
-    # Create OVS interface with IP configuration if provided
-    local if_conn_name="${bridge_name}-if"
+    # Step 2: Create OVS interface with IP (Example 20, line 3)
+    log_info "Creating OVS interface with IP configuration"
     
-    if nmcli -t -f NAME connection show "$if_conn_name" >/dev/null 2>&1; then
-        log_info "Deleting existing interface connection $if_conn_name for clean recreation"
-        nmcli connection delete "$if_conn_name" 2>/dev/null || true
-    fi
-    
-    # Build the command with IP configuration if provided
-    local cmd=(
-        nmcli connection add
-        type ovs-interface
-        con-name "$if_conn_name"
-        ifname "$if_name"
-        connection.master "$port_name"
-        connection.slave-type ovs-port
-        connection.autoconnect yes
-        connection.autoconnect-priority 95
-        ovs-interface.type internal
-    )
+    # Build command following documentation exactly
+    local cmd=(nmcli conn add type ovs-interface port-type ovs-port 
+              conn.interface "$if_name" controller "$port_name")
     
     # Add IP configuration if provided
     if [[ -n "$ip_addr" ]]; then
-        log_info "Configuring IP $ip_addr on ovs-interface $if_conn_name"
-        cmd+=(
-            ipv4.method manual
-            ipv4.addresses "$ip_addr"
-            ipv6.method disabled
-        )
+        cmd+=(ipv4.method manual ipv4.address "$ip_addr")
         if [[ -n "$gateway" ]]; then
+            # In the docs, gateway might be set separately or as part of ipv4.address
             cmd+=(ipv4.gateway "$gateway")
         fi
     else
-        cmd+=(
-            ipv4.method disabled
-            ipv6.method disabled
-        )
+        cmd+=(ipv4.method disabled)
     fi
     
     "${cmd[@]}" || {
-        log_error "Failed to create interface $if_conn_name"
+        log_error "Failed to create interface $if_name"
         return 1
     }
     
-    log_info "Internal port configured for bridge $bridge_name"
+    log_info "Internal port configured per NetworkManager documentation"
 }
 
 # Configure IP address - not needed as separate function
@@ -304,21 +269,10 @@ create_uplink_port() {
         fi
     fi
     
-    # Create OVS port - always fresh with master defined from start
-    if nmcli -t -f NAME connection show "$port_name" >/dev/null 2>&1; then
-        log_info "Deleting existing port connection $port_name for clean recreation"
-        nmcli connection delete "$port_name" 2>/dev/null || true
-    fi
-    
-    nmcli connection add \
-        type ovs-port \
-        con-name "$port_name" \
-        ifname "$uplink_if" \
-        connection.master "$bridge_name" \
-        connection.slave-type ovs-bridge \
-        connection.autoconnect yes \
-        connection.autoconnect-priority 90 || {
-        log_error "Failed to create port $port_name"
+    # Create OVS port following Example 21
+    log_info "Creating OVS port for uplink (Example 21)"
+    nmcli conn add type ovs-port conn.interface "port1" controller "$bridge_name" || {
+        log_error "Failed to create uplink port"
         return 1
     }
     
@@ -355,17 +309,10 @@ create_uplink_port() {
             nmcli connection delete "$eth_conn_name" 2>/dev/null || true
         fi
         
-        # Create with master/slave defined from the start
-        nmcli connection add \
-            type ethernet \
-            con-name "$eth_conn_name" \
-            ifname "$uplink_if" \
-            connection.master "$port_name" \
-            connection.slave-type ovs-port \
-            connection.autoconnect yes \
-            connection.autoconnect-priority 85 \
-            802-3-ethernet.auto-negotiate yes || {
-            log_error "Failed to create ethernet slave connection"
+        # Create ethernet following Example 21
+        log_info "Adding Linux interface to bridge (Example 21)"
+        nmcli conn add type ethernet conn.interface "$uplink_if" controller "port1" || {
+            log_error "Failed to create ethernet connection"
             return 1
         }
     fi
