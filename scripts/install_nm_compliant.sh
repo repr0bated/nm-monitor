@@ -218,7 +218,7 @@ create_internal_port() {
             ifname "$if_name" \
             connection.master "$port_name" \
             connection.slave-type ovs-port \
-            connection.autoconnect yes \
+            connection.autoconnect no \
             connection.autoconnect-priority 95 \
             ovs-interface.type internal || {
             log_error "Failed to create interface $if_conn_name"
@@ -371,9 +371,35 @@ activate_bridge() {
         }
     fi
     
+    # Make sure slaves are ready
+    log_info "Ensuring slave connections are ready..."
+    
+    # The slaves should auto-activate with the bridge, but let's make sure they're configured properly
+    local port_name="${bridge_name}-port-int"
+    local if_name="${bridge_name}-if"
+    
+    # Check if the connections exist and are properly configured
+    if nmcli connection show "$port_name" >/dev/null 2>&1; then
+        log_info "Port connection $port_name exists"
+    else
+        log_error "Port connection $port_name missing!"
+        return 1
+    fi
+    
+    if nmcli connection show "$if_name" >/dev/null 2>&1; then
+        log_info "Interface connection $if_name exists"
+    else
+        log_error "Interface connection $if_name missing!"
+        return 1
+    fi
+    
+    # First, set autoconnect on the interface now that we're ready
+    nmcli connection modify "$if_name" connection.autoconnect yes || true
+    
     # Try to activate with a shorter timeout first
     log_info "Attempting to activate bridge..."
-    if ! nmcli -w 10 connection up "$bridge_name" 2>&1 | tee /tmp/bridge-activation.log; then
+    # Use --wait to ensure proper ordering
+    if ! nmcli --wait 10 connection up "$bridge_name" 2>&1 | tee /tmp/bridge-activation.log; then
         log_warn "Initial activation failed, checking state..."
         
         # Check current state
@@ -401,12 +427,16 @@ activate_bridge() {
         journalctl -u NetworkManager -n 20 --no-pager | grep -E "error|fail|ovs" -i || true
         
         # Check if slaves are blocking
-        local slaves=$(nmcli -t -f connection.master connection show | grep ":$bridge_name$" | cut -d: -f1)
+        log_info "Checking slave connections..."
+        local slaves=$(nmcli -t -f NAME,TYPE connection show | grep -E "ovs-(port|interface)" | cut -d: -f1)
         if [[ -n "$slaves" ]]; then
-            log_info "Found slave connections, checking their state..."
             for slave in $slaves; do
-                local slave_state=$(nmcli -t -f GENERAL.STATE connection show "$slave" 2>/dev/null | cut -d: -f2 || echo "unknown")
-                log_info "  $slave: $slave_state"
+                local slave_info=$(nmcli -t -f GENERAL.STATE,connection.master connection show "$slave" 2>/dev/null || echo "unknown:unknown")
+                local slave_state=$(echo "$slave_info" | cut -d: -f1)
+                local slave_master=$(echo "$slave_info" | cut -d: -f2)
+                if [[ "$slave_master" == "$bridge_name" ]]; then
+                    log_info "  $slave: state=$slave_state"
+                fi
             done
         fi
         
