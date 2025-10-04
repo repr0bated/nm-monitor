@@ -170,61 +170,44 @@ create_internal_port() {
     
     log_info "Creating internal port for bridge $bridge_name"
     
-    # Create OVS port
+    # Create OVS port - always fresh with master defined from start
     if nmcli -t -f NAME connection show "$port_name" >/dev/null 2>&1; then
-        log_info "Port connection $port_name already exists, updating..."
-        
-        nmcli connection modify "$port_name" \
-            connection.master "$bridge_name" \
-            connection.slave-type ovs-bridge \
-            connection.autoconnect yes \
-            connection.autoconnect-priority 95 || {
-            log_error "Failed to modify port $port_name"
-            return 1
-        }
-    else
-        nmcli connection add \
-            type ovs-port \
-            con-name "$port_name" \
-            ifname "$if_name" \
-            connection.master "$bridge_name" \
-            connection.slave-type ovs-bridge \
-            connection.autoconnect yes \
-            connection.autoconnect-priority 95 || {
-            log_error "Failed to create port $port_name"
-            return 1
-        }
+        log_info "Deleting existing port connection $port_name for clean recreation"
+        nmcli connection delete "$port_name" 2>/dev/null || true
     fi
     
-    # Create OVS interface
+    nmcli connection add \
+        type ovs-port \
+        con-name "$port_name" \
+        ifname "$if_name" \
+        connection.master "$bridge_name" \
+        connection.slave-type ovs-bridge \
+        connection.autoconnect yes \
+        connection.autoconnect-priority 95 || {
+        log_error "Failed to create port $port_name"
+        return 1
+    }
+    
+    # Create OVS interface - always fresh with master defined from start
     local if_conn_name="${bridge_name}-if"
     
     if nmcli -t -f NAME connection show "$if_conn_name" >/dev/null 2>&1; then
-        log_info "Interface connection $if_conn_name already exists, updating..."
-        
-        nmcli connection modify "$if_conn_name" \
-            connection.master "$port_name" \
-            connection.slave-type ovs-port \
-            connection.autoconnect yes \
-            connection.autoconnect-priority 95 \
-            ovs-interface.type internal || {
-            log_error "Failed to modify interface $if_conn_name"
-            return 1
-        }
-    else
-        nmcli connection add \
-            type ovs-interface \
-            con-name "$if_conn_name" \
-            ifname "$if_name" \
-            connection.master "$port_name" \
-            connection.slave-type ovs-port \
-            connection.autoconnect no \
-            connection.autoconnect-priority 95 \
-            ovs-interface.type internal || {
-            log_error "Failed to create interface $if_conn_name"
-            return 1
-        }
+        log_info "Deleting existing interface connection $if_conn_name for clean recreation"
+        nmcli connection delete "$if_conn_name" 2>/dev/null || true
     fi
+    
+    nmcli connection add \
+        type ovs-interface \
+        con-name "$if_conn_name" \
+        ifname "$if_name" \
+        connection.master "$port_name" \
+        connection.slave-type ovs-port \
+        connection.autoconnect yes \
+        connection.autoconnect-priority 95 \
+        ovs-interface.type internal || {
+        log_error "Failed to create interface $if_conn_name"
+        return 1
+    }
     
     log_info "Internal port configured for bridge $bridge_name"
 }
@@ -268,39 +251,38 @@ create_uplink_port() {
     local active_conn=$(nmcli -t -f NAME,DEVICE,TYPE,ACTIVE connection show --active | \
         awk -F: -v dev="$uplink_if" '$2==dev && $3=="802-3-ethernet" && $4=="yes" {print $1; exit}')
     
-    # Create OVS port
+    # Create OVS port - always fresh with master defined from start
     if nmcli -t -f NAME connection show "$port_name" >/dev/null 2>&1; then
-        log_info "Port connection $port_name already exists, updating..."
-        
-        nmcli connection modify "$port_name" \
-            connection.master "$bridge_name" \
-            connection.slave-type ovs-bridge \
-            connection.autoconnect yes \
-            connection.autoconnect-priority 90 || {
-            log_error "Failed to modify port $port_name"
-            return 1
-        }
-    else
-        nmcli connection add \
-            type ovs-port \
-            con-name "$port_name" \
-            ifname "$uplink_if" \
-            connection.master "$bridge_name" \
-            connection.slave-type ovs-bridge \
-            connection.autoconnect yes \
-            connection.autoconnect-priority 90 || {
-            log_error "Failed to create port $port_name"
-            return 1
-        }
+        log_info "Deleting existing port connection $port_name for clean recreation"
+        nmcli connection delete "$port_name" 2>/dev/null || true
     fi
     
-    # Handle ethernet connection
+    nmcli connection add \
+        type ovs-port \
+        con-name "$port_name" \
+        ifname "$uplink_if" \
+        connection.master "$bridge_name" \
+        connection.slave-type ovs-bridge \
+        connection.autoconnect yes \
+        connection.autoconnect-priority 90 || {
+        log_error "Failed to create port $port_name"
+        return 1
+    }
+    
+    # Handle ethernet connection - create with enslavement in one command
     local eth_conn_name="${bridge_name}-eth-${uplink_if}"
     
     if [[ -n "$active_conn" ]]; then
         log_info "Migrating active connection '$active_conn' to OVS slave"
         
-        # Modify existing connection to be OVS slave
+        # First remove IP configuration from the active connection
+        nmcli connection modify "$active_conn" \
+            ipv4.method disabled \
+            ipv4.addresses "" \
+            ipv4.gateway "" \
+            ipv6.method disabled || true
+        
+        # Then modify it to be enslaved in one command
         nmcli connection modify "$active_conn" \
             connection.master "$port_name" \
             connection.slave-type ovs-port \
@@ -314,32 +296,25 @@ create_uplink_port() {
         nmcli connection modify "$active_conn" \
             connection.id "$eth_conn_name" || true
     else
-        # Create new ethernet connection
+        # Create new ethernet connection already enslaved
         if nmcli -t -f NAME connection show "$eth_conn_name" >/dev/null 2>&1; then
-            log_info "Ethernet connection $eth_conn_name already exists, updating..."
-            
-            nmcli connection modify "$eth_conn_name" \
-                connection.master "$port_name" \
-                connection.slave-type ovs-port \
-                connection.autoconnect yes \
-                connection.autoconnect-priority 85 || {
-                log_error "Failed to modify ethernet connection"
-                return 1
-            }
-        else
-            nmcli connection add \
-                type ethernet \
-                con-name "$eth_conn_name" \
-                ifname "$uplink_if" \
-                connection.master "$port_name" \
-                connection.slave-type ovs-port \
-                connection.autoconnect yes \
-                connection.autoconnect-priority 85 \
-                802-3-ethernet.auto-negotiate yes || {
-                log_error "Failed to create ethernet connection"
-                return 1
-            }
+            log_info "Ethernet connection $eth_conn_name already exists, recreating..."
+            nmcli connection delete "$eth_conn_name" 2>/dev/null || true
         fi
+        
+        # Create with master/slave defined from the start
+        nmcli connection add \
+            type ethernet \
+            con-name "$eth_conn_name" \
+            ifname "$uplink_if" \
+            connection.master "$port_name" \
+            connection.slave-type ovs-port \
+            connection.autoconnect yes \
+            connection.autoconnect-priority 85 \
+            802-3-ethernet.auto-negotiate yes || {
+            log_error "Failed to create ethernet slave connection"
+            return 1
+        }
     fi
     
     log_info "Uplink port configured for interface $uplink_if"
