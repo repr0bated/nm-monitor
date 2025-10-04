@@ -72,7 +72,13 @@ pub async fn serve_with_state(state: AppState) -> Result<()> {
 
 pub async fn introspect_nm() -> Result<()> {
     use zbus::fdo::IntrospectableProxy;
+    
+    info!("Performing D-Bus introspection on NetworkManager");
+    
     let conn = zbus::Connection::system().await?;
+    
+    // Introspect main NetworkManager object
+    println!("=== NetworkManager Main Object ===");
     let proxy = IntrospectableProxy::builder(&conn)
         .destination("org.freedesktop.NetworkManager")?
         .path("/org/freedesktop/NetworkManager")?
@@ -80,5 +86,52 @@ pub async fn introspect_nm() -> Result<()> {
         .await?;
     let xml = proxy.introspect().await?;
     println!("{}", xml);
+    
+    // Introspect Settings object
+    println!("\n=== NetworkManager Settings Object ===");
+    let settings_proxy = IntrospectableProxy::builder(&conn)
+        .destination("org.freedesktop.NetworkManager")?
+        .path("/org/freedesktop/NetworkManager/Settings")?
+        .build()
+        .await?;
+    let settings_xml = settings_proxy.introspect().await?;
+    println!("{}", settings_xml);
+    
+    // Try to introspect OVS-specific paths if they exist
+    println!("\n=== Checking for OVS-specific interfaces ===");
+    
+    // Get list of connections
+    let list_output = std::process::Command::new("nmcli")
+        .args(["-t", "-f", "UUID,TYPE", "connection", "show"])
+        .output()?;
+    
+    if list_output.status.success() {
+        let connections = String::from_utf8_lossy(&list_output.stdout);
+        for line in connections.lines() {
+            if let Some((uuid, conn_type)) = line.split_once(':') {
+                if conn_type.contains("ovs") {
+                    println!("\nFound OVS connection: {} (type: {})", uuid, conn_type);
+                    
+                    // Try to introspect the connection object
+                    let conn_path = format!("/org/freedesktop/NetworkManager/Settings/{}", uuid.replace('-', "_"));
+                    match IntrospectableProxy::builder(&conn)
+                        .destination("org.freedesktop.NetworkManager")?
+                        .path(&conn_path)?
+                        .build()
+                        .await
+                    {
+                        Ok(conn_proxy) => {
+                            match conn_proxy.introspect().await {
+                                Ok(conn_xml) => println!("Connection introspection:\n{}", conn_xml),
+                                Err(e) => println!("Failed to introspect connection: {}", e),
+                            }
+                        }
+                        Err(e) => println!("Failed to create proxy for {}: {}", conn_path, e),
+                    }
+                }
+            }
+        }
+    }
+    
     Ok(())
 }
