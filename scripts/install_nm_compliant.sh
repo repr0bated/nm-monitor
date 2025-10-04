@@ -14,6 +14,8 @@ set -euo pipefail
 : "${OVSBR1_GW:=}"
 : "${OVSBR1_UPLINK:=}"
 : "${SYSTEM_INSTALL:=0}"
+: "${FORCE_CLEANUP:=0}"
+: "${NON_INTERACTIVE:=0}"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -27,6 +29,21 @@ while [[ $# -gt 0 ]]; do
         --ovsbr1-gw) OVSBR1_GW="$2"; shift 2 ;;
         --ovsbr1-uplink) OVSBR1_UPLINK="$2"; shift 2 ;;
         --system) SYSTEM_INSTALL=1; shift ;;
+        --force-cleanup) FORCE_CLEANUP=1; shift ;;
+        --non-interactive|-y) NON_INTERACTIVE=1; shift ;;
+        --help)
+            echo "Usage: $0 [OPTIONS]"
+            echo "Options:"
+            echo "  --bridge NAME           Bridge name (default: ovsbr0)"
+            echo "  --nm-ip IP/MASK         IP address for bridge"
+            echo "  --nm-gw GATEWAY         Gateway for bridge"
+            echo "  --uplink INTERFACE      Physical interface to attach"
+            echo "  --with-ovsbr1           Create secondary bridge"
+            echo "  --system                Install and start systemd service"
+            echo "  --force-cleanup         Force cleanup of existing connections"
+            echo "  --non-interactive, -y   Non-interactive mode"
+            exit 0
+            ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -60,7 +77,50 @@ check_prerequisites() {
         exit 1
     fi
     
+    # Check OVS service
+    if ! systemctl is-active --quiet openvswitch-switch && ! systemctl is-active --quiet openvswitch; then
+        log_warn "Open vSwitch service is not running, will start it later"
+    fi
+    
     log_info "All prerequisites met"
+}
+
+# Clean up existing conflicting connections
+cleanup_existing_connections() {
+    local bridge_name="$1"
+    
+    log_info "Checking for existing connections..."
+    
+    # Find all connections related to this bridge
+    local related_conns=$(nmcli -t -f NAME,TYPE connection show | grep -E "(^${bridge_name}[:-]|^${bridge_name}$)" | cut -d: -f1)
+    
+    if [[ -n "$related_conns" ]]; then
+        log_warn "Found existing connections that may conflict:"
+        echo "$related_conns" | while IFS= read -r conn; do
+            echo "  - $conn"
+        done
+        
+        if [[ "$NON_INTERACTIVE" == 1 || "$FORCE_CLEANUP" == 1 ]]; then
+            REPLY="y"
+        else
+            read -p "Delete existing connections? (y/N) " -n 1 -r
+            echo
+        fi
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            echo "$related_conns" | while IFS= read -r conn; do
+                log_info "Deleting connection: $conn"
+                nmcli connection delete "$conn" 2>/dev/null || true
+            done
+            
+            # Also clean up OVS if bridge exists
+            if ovs-vsctl br-exists "$bridge_name" 2>/dev/null; then
+                log_info "Removing bridge from Open vSwitch"
+                ovs-vsctl del-br "$bridge_name" || true
+            fi
+        else
+            log_warn "Keeping existing connections, this may cause conflicts"
+        fi
+    fi
 }
 
 # Create OVS bridge following NetworkManager documentation
@@ -291,11 +351,65 @@ activate_bridge() {
     
     log_info "Activating bridge $bridge_name (atomic handoff)"
     
-    # NetworkManager handles slave activation atomically
-    nmcli -w 30 connection up "$bridge_name" || {
-        log_warn "Failed to activate bridge $bridge_name"
-        # Try to get more information about the failure
-        nmcli connection show "$bridge_name" | grep -E "GENERAL|STATE"
+    # Check if OVS is running
+    if ! systemctl is-active --quiet openvswitch-switch && ! systemctl is-active --quiet openvswitch; then
+        log_error "Open vSwitch service is not running"
+        log_info "Starting Open vSwitch..."
+        systemctl start openvswitch-switch 2>/dev/null || systemctl start openvswitch 2>/dev/null || {
+            log_error "Failed to start Open vSwitch"
+            return 1
+        }
+        sleep 2
+    fi
+    
+    # Check if bridge exists in OVS
+    if ! ovs-vsctl br-exists "$bridge_name" 2>/dev/null; then
+        log_info "Bridge $bridge_name not in OVS, adding..."
+        ovs-vsctl add-br "$bridge_name" || {
+            log_error "Failed to add bridge to Open vSwitch"
+            return 1
+        }
+    fi
+    
+    # Try to activate with a shorter timeout first
+    log_info "Attempting to activate bridge..."
+    if ! nmcli -w 10 connection up "$bridge_name" 2>&1 | tee /tmp/bridge-activation.log; then
+        log_warn "Initial activation failed, checking state..."
+        
+        # Check current state
+        local state=$(nmcli -t -f GENERAL.STATE connection show "$bridge_name" | cut -d: -f2)
+        log_info "Bridge state: $state"
+        
+        if [[ "$state" == "activating" ]]; then
+            log_info "Bridge is still activating, waiting..."
+            sleep 5
+            
+            # Check again
+            state=$(nmcli -t -f GENERAL.STATE connection show "$bridge_name" | cut -d: -f2)
+            if [[ "$state" == "activated" ]]; then
+                log_info "Bridge activated successfully"
+                return 0
+            fi
+        fi
+        
+        # Try to diagnose the issue
+        log_warn "Activation failed, diagnosing..."
+        nmcli connection show "$bridge_name" | grep -E "GENERAL|STATE|ERROR" || true
+        
+        # Check journal for errors
+        log_info "Checking system logs..."
+        journalctl -u NetworkManager -n 20 --no-pager | grep -E "error|fail|ovs" -i || true
+        
+        # Check if slaves are blocking
+        local slaves=$(nmcli -t -f connection.master connection show | grep ":$bridge_name$" | cut -d: -f1)
+        if [[ -n "$slaves" ]]; then
+            log_info "Found slave connections, checking their state..."
+            for slave in $slaves; do
+                local slave_state=$(nmcli -t -f GENERAL.STATE connection show "$slave" 2>/dev/null | cut -d: -f2 || echo "unknown")
+                log_info "  $slave: $slave_state"
+            done
+        fi
+        
         return 1
     }
     
@@ -401,6 +515,19 @@ main() {
     log_info "Starting NetworkManager-compliant OVS bridge installation"
     
     check_prerequisites
+    
+    # Clean up existing connections if needed
+    cleanup_existing_connections "$BRIDGE"
+    
+    # Ensure OVS service is running
+    if ! systemctl is-active --quiet openvswitch-switch && ! systemctl is-active --quiet openvswitch; then
+        log_info "Starting Open vSwitch service..."
+        systemctl start openvswitch-switch 2>/dev/null || systemctl start openvswitch 2>/dev/null || {
+            log_error "Failed to start Open vSwitch service"
+            exit 1
+        }
+        sleep 2
+    fi
     
     # Create primary bridge
     create_ovs_bridge "$BRIDGE"
