@@ -145,15 +145,12 @@ create_ovs_bridge() {
         }
     else
         # Create new OVS bridge connection
+        # Following NetworkManager documentation Example 20
         nmcli connection add \
             type ovs-bridge \
-            con-name "$bridge_name" \
-            ifname "$bridge_name" \
+            conn.interface "$bridge_name" \
             ovs-bridge.stp no \
-            ovs-bridge.rstp no \
-            ovs-bridge.mcast-snooping-enable yes \
-            connection.autoconnect yes \
-            connection.autoconnect-priority 100 || {
+            ovs-bridge.rstp no || {
             log_error "Failed to create bridge $bridge_name"
             return 1
         }
