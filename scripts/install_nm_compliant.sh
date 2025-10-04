@@ -131,26 +131,16 @@ create_ovs_bridge() {
     
     # Check if bridge connection already exists
     if nmcli -t -f NAME connection show "$bridge_name" >/dev/null 2>&1; then
-        log_info "Bridge connection $bridge_name already exists, updating..."
-        
-        # Update bridge settings according to NM documentation
-        nmcli connection modify "$bridge_name" \
-            ovs-bridge.stp no \
-            ovs-bridge.rstp no \
-            ovs-bridge.mcast-snooping-enable yes \
-            connection.autoconnect yes \
-            connection.autoconnect-priority 100 || {
-            log_error "Failed to modify bridge $bridge_name"
-            return 1
-        }
-    else
-        # Create new OVS bridge connection
-        # Following NetworkManager documentation Example 20 EXACTLY
-        nmcli conn add type ovs-bridge conn.interface "$bridge_name" || {
-            log_error "Failed to create bridge $bridge_name"
-            return 1
-        }
+        log_info "Bridge connection $bridge_name already exists, deleting for clean recreation"
+        nmcli connection delete "$bridge_name" 2>/dev/null || true
     fi
+    
+    # Create new OVS bridge connection
+    # Following NetworkManager documentation Example 20 EXACTLY
+    nmcli conn add type ovs-bridge conn.interface "$bridge_name" || {
+        log_error "Failed to create bridge $bridge_name"
+        return 1
+    }
     
     log_info "OVS bridge $bridge_name configured"
 }
@@ -280,7 +270,7 @@ create_uplink_port() {
     local eth_conn_name="${bridge_name}-eth-${uplink_if}"
     
     if [[ -n "$active_conn" ]]; then
-        log_info "Migrating active connection '$active_conn' to OVS slave"
+        log_info "Migrating active connection '$active_conn' to OVS"
         
         # First remove IP configuration from the active connection
         nmcli connection modify "$active_conn" \
@@ -289,33 +279,16 @@ create_uplink_port() {
             ipv4.gateway "" \
             ipv6.method disabled || true
         
-        # Then modify it to be enslaved in one command
-        nmcli connection modify "$active_conn" \
-            connection.master "$port_name" \
-            connection.slave-type ovs-port \
-            connection.autoconnect yes \
-            connection.autoconnect-priority 85 || {
-            log_error "Failed to modify active connection"
-            return 1
-        }
-        
-        # Optionally rename for consistency
-        nmcli connection modify "$active_conn" \
-            connection.id "$eth_conn_name" || true
-    else
-        # Create new ethernet connection already enslaved
-        if nmcli -t -f NAME connection show "$eth_conn_name" >/dev/null 2>&1; then
-            log_info "Ethernet connection $eth_conn_name already exists, recreating..."
-            nmcli connection delete "$eth_conn_name" 2>/dev/null || true
-        fi
-        
-        # Create ethernet following Example 21
-        log_info "Adding Linux interface to bridge (Example 21)"
-        nmcli conn add type ethernet conn.interface "$uplink_if" controller "port1" || {
-            log_error "Failed to create ethernet connection"
-            return 1
-        }
+        # Delete and recreate as per Example 21
+        nmcli connection delete "$active_conn" 2>/dev/null || true
     fi
+    
+    # Always create new ethernet connection following Example 21
+    log_info "Adding Linux interface to bridge (Example 21)"
+    nmcli conn add type ethernet conn.interface "$uplink_if" controller "port1" || {
+        log_error "Failed to create ethernet connection"
+        return 1
+    }
     
     log_info "Uplink port configured for interface $uplink_if"
     
@@ -406,17 +379,13 @@ activate_bridge() {
         log_info "Checking system logs..."
         journalctl -u NetworkManager -n 20 --no-pager | grep -E "error|fail|ovs" -i || true
         
-        # Check if slaves are blocking
-        log_info "Checking slave connections..."
-        local slaves=$(nmcli -t -f NAME,TYPE connection show | grep -E "ovs-(port|interface)" | cut -d: -f1)
-        if [[ -n "$slaves" ]]; then
-            for slave in $slaves; do
-                local slave_info=$(nmcli -t -f GENERAL.STATE,connection.master connection show "$slave" 2>/dev/null || echo "unknown:unknown")
-                local slave_state=$(echo "$slave_info" | cut -d: -f1)
-                local slave_master=$(echo "$slave_info" | cut -d: -f2)
-                if [[ "$slave_master" == "$bridge_name" ]]; then
-                    log_info "  $slave: state=$slave_state"
-                fi
+        # Check controlled connections
+        log_info "Checking controlled connections..."
+        local ports=$(nmcli -t -f NAME,TYPE connection show | grep -E "ovs-(port|interface)" | cut -d: -f1)
+        if [[ -n "$ports" ]]; then
+            for port in $ports; do
+                local port_state=$(nmcli -t -f GENERAL.STATE connection show "$port" 2>/dev/null | cut -d: -f2 || echo "unknown")
+                log_info "  $port: state=$port_state"
             done
         fi
         
@@ -438,16 +407,13 @@ validate_bridge() {
         return 1
     fi
     
-    # Check internal port
-    local port_name="${bridge_name}-port-int"
-    if ! nmcli -t -f NAME,STATE connection show "$port_name" 2>/dev/null | grep -q ":activated$"; then
-        log_warn "Internal port $port_name is not active"
+    # Check for port0 and iface0 as per documentation
+    if ! nmcli -t -f NAME,STATE connection show "ovs-port-port0" 2>/dev/null | grep -q ":activated$"; then
+        log_warn "Port ovs-port-port0 is not active"
     fi
     
-    # Check interface
-    local if_name="${bridge_name}-if"
-    if ! nmcli -t -f NAME,STATE connection show "$if_name" 2>/dev/null | grep -q ":activated$"; then
-        log_warn "Interface $if_name is not active"
+    if ! nmcli -t -f NAME,STATE connection show "ovs-interface-iface0" 2>/dev/null | grep -q ":activated$"; then
+        log_warn "Interface ovs-interface-iface0 is not active"
     fi
     
     # Verify OVS state
@@ -579,7 +545,7 @@ main() {
         create_internal_port "$BRIDGE" "$NM_IP" "$NM_GW"
     fi
     
-    # NOW activate bridge - NetworkManager will handle all slaves atomically
+    # NOW activate bridge - NetworkManager will handle all controlled connections atomically
     activate_bridge "$BRIDGE"
     validate_bridge "$BRIDGE"
     
