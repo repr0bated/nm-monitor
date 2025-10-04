@@ -277,7 +277,7 @@ create_uplink_port() {
     
     # Safety check for remote systems
     if [[ -n "${SSH_CONNECTION:-}" ]]; then
-        local ssh_device=$(ip -4 addr show | grep "inet $(echo "$SSH_CONNECTION" | awk '{print $3}')" | awk '{print $NF}')
+        ssh_device=$(ip -4 addr show | grep "inet $(echo "$SSH_CONNECTION" | awk '{print $3}')" | awk '{print $NF}')
         if [[ "$ssh_device" == "$uplink_if" ]]; then
             log_error "WARNING: Interface $uplink_if is being used for SSH!"
             log_error "Modifying it will disconnect your session!"

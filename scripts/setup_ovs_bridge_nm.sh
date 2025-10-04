@@ -53,19 +53,19 @@ IP_DNS=""
 log_info "Checking all active network connections..."
 nmcli -t -f NAME,DEVICE,TYPE,STATE connection show --active | grep ":activated$" | while IFS=: read -r name device type state; do
     if [[ "$type" == "802-3-ethernet" || "$type" == "802-11-wireless" ]]; then
-        local ip=$(nmcli -t -f IP4.ADDRESS connection show "$name" | cut -d: -f2 | cut -d/ -f1)
+        ip=$(nmcli -t -f IP4.ADDRESS connection show "$name" | cut -d: -f2 | cut -d/ -f1)
         log_info "  $device: $name (IP: ${ip:-none})"
     fi
 done
 
 # Detect current SSH connection if any
 if [[ -n "$SSH_CONNECTION" ]]; then
-    local ssh_ip=$(echo "$SSH_CONNECTION" | awk '{print $3}')
+    ssh_ip=$(echo "$SSH_CONNECTION" | awk '{print $3}')
     log_warn "SSH connection detected from: $ssh_ip"
     log_warn "Make sure you're not modifying the interface used for this connection!"
     
     # Try to find which interface has our SSH IP
-    local ssh_device=$(ip -4 addr show | grep "inet $ssh_ip" | awk '{print $NF}')
+    ssh_device=$(ip -4 addr show | grep "inet $ssh_ip" | awk '{print $NF}')
     if [[ -n "$ssh_device" ]]; then
         log_warn "SSH is using interface: $ssh_device"
         if [[ "$ssh_device" == "$UPLINK" ]]; then
