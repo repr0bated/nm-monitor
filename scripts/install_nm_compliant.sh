@@ -411,7 +411,7 @@ activate_bridge() {
         fi
         
         return 1
-    }
+    fi
     
     log_info "Bridge $bridge_name activated successfully"
 }
