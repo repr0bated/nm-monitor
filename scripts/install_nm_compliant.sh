@@ -291,11 +291,6 @@ create_uplink_port() {
     }
     
     log_info "Uplink port configured for interface $uplink_if"
-    
-    # Return whether IP needs to be migrated
-    if [[ "$migrate_ip" == "true" ]]; then
-        echo "$ip_config"
-    fi
 }
 
 # Activate bridge with atomic handoff
@@ -508,41 +503,45 @@ main() {
     # Create ALL components before ANY activation
     log_info "Creating complete bridge configuration..."
     
-    # Create bridge
+    # Step 1: Create bridge (Example 20, line 1)
     create_ovs_bridge "$BRIDGE"
     
-    # Check if we need to migrate IP from uplink
-    local migrated_ip=""
-    local use_configured_ip=true
+    # Step 2: Introspect IP from uplink if provided (before creating ports)
+    local final_ip="$NM_IP"
+    local final_gw="$NM_GW"
     
-    # Create uplink port first to check for IP migration
     if [[ -n "$UPLINK" ]]; then
-        log_info "Checking uplink $UPLINK for IP configuration to migrate..."
-        migrated_ip=$(create_uplink_port "$BRIDGE" "$UPLINK")
+        log_info "Introspecting IP configuration from uplink $UPLINK..."
         
-        if [[ -n "$migrated_ip" ]]; then
-            log_info "Will migrate IP configuration from uplink"
-            use_configured_ip=false
-            
-            # Parse the migrated IP info
-            local method=$(echo "$migrated_ip" | grep -o 'METHOD=[^;]*' | cut -d= -f2)
-            local addresses=$(echo "$migrated_ip" | grep -o 'ADDRESSES=[^;]*' | cut -d= -f2)
-            local gateway=$(echo "$migrated_ip" | grep -o 'GATEWAY=[^;]*' | cut -d= -f2)
-            local dns=$(echo "$migrated_ip" | grep -o 'DNS=[^;]*' | cut -d= -f2)
-            
-            # Use migrated configuration
-            NM_IP="$addresses"
-            NM_GW="$gateway"
+        # Find active connection on uplink
+        local active_conn=$(nmcli -t -f NAME,DEVICE,TYPE,ACTIVE connection show --active | \
+            awk -F: -v dev="$UPLINK" '$2==dev && $3=="802-3-ethernet" && $4=="yes" {print $1; exit}')
+        
+        if [[ -n "$active_conn" ]]; then
+            local ip_config=$(introspect_ip_config "$active_conn")
+            if [[ -n "$ip_config" ]]; then
+                log_info "Found IP configuration to migrate: $ip_config"
+                
+                # Parse the introspected IP info
+                local addresses=$(echo "$ip_config" | grep -o 'ADDRESSES=[^;]*' | cut -d= -f2)
+                local gateway=$(echo "$ip_config" | grep -o 'GATEWAY=[^;]*' | cut -d= -f2)
+                
+                # Use introspected config if no manual IP specified
+                if [[ -z "$NM_IP" && -n "$addresses" ]]; then
+                    final_ip="$addresses"
+                    final_gw="$gateway"
+                    log_info "Using introspected IP: $final_ip"
+                fi
+            fi
         fi
     fi
     
-    # Create internal port and interface with appropriate IP configuration
-    if [[ "$use_configured_ip" == "true" ]]; then
-        # Use manually specified IP configuration
-        create_internal_port "$BRIDGE" "$NM_IP" "$NM_GW"
-    else
-        # Use migrated IP configuration from uplink
-        create_internal_port "$BRIDGE" "$NM_IP" "$NM_GW"
+    # Step 3: Create internal port and interface with IP (Example 20, lines 2-3)
+    create_internal_port "$BRIDGE" "$final_ip" "$final_gw"
+    
+    # Step 4: Add uplink if provided (Example 21)
+    if [[ -n "$UPLINK" ]]; then
+        create_uplink_port "$BRIDGE" "$UPLINK"
     fi
     
     # NOW activate bridge - NetworkManager will handle all controlled connections atomically
