@@ -568,12 +568,13 @@ main() {
         configure_ip_address "${BRIDGE}-if" "$NM_IP" "$NM_GW"
     fi
     
-    # Add uplink if provided
+    # Add uplink BEFORE activation if provided
     if [[ -n "$UPLINK" ]]; then
+        log_info "Adding uplink $UPLINK before bridge activation"
         create_uplink_port "$BRIDGE" "$UPLINK"
     fi
     
-    # Activate bridge
+    # NOW activate bridge with all components ready
     activate_bridge "$BRIDGE"
     validate_bridge "$BRIDGE"
     
