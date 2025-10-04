@@ -4,7 +4,7 @@ use log::info;
 use std::future;
 
 use crate::ledger::Ledger;
-use crate::ovs;
+use crate::nmcli_dyn;
 use std::path::PathBuf;
 
 pub struct AppState {
@@ -27,13 +27,15 @@ impl PortAgent {
 
     /// List OVS ports on the managed bridge
     fn list_ports(&self) -> zbus::fdo::Result<Vec<String>> {
-        ovs::list_ports(&self.state.bridge)
+        nmcli_dyn::list_connection_names()
+            .map(|v| v.into_iter().filter(|n| n.starts_with("dyn-eth-"))
+                .map(|n| n.trim_start_matches("dyn-eth-").to_string()).collect())
             .map_err(|e| zbus::fdo::Error::Failed(format!("{}", e)))
     }
 
     /// Add a port to the managed bridge
     fn add_port(&self, name: &str) -> zbus::fdo::Result<()> {
-        ovs::add_port(&self.state.bridge, name)
+        nmcli_dyn::ensure_dynamic_port(&self.state.bridge, name)
             .map_err(|e| zbus::fdo::Error::Failed(format!("{}", e)))?;
         if let Ok(mut lg) = Ledger::open(PathBuf::from(&self.state.ledger_path)) {
             let _ = lg.append("dbus_add_port", serde_json::json!({"port": name, "bridge": self.state.bridge}));
@@ -43,7 +45,7 @@ impl PortAgent {
 
     /// Delete a port from the managed bridge
     fn del_port(&self, name: &str) -> zbus::fdo::Result<()> {
-        ovs::del_port(&self.state.bridge, name)
+        nmcli_dyn::remove_dynamic_port(name)
             .map_err(|e| zbus::fdo::Error::Failed(format!("{}", e)))?;
         if let Ok(mut lg) = Ledger::open(PathBuf::from(&self.state.ledger_path)) {
             let _ = lg.append("dbus_del_port", serde_json::json!({"port": name, "bridge": self.state.bridge}));

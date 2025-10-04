@@ -1,7 +1,6 @@
 mod config;
 mod logging;
 mod naming;
-mod ovs;
 mod interfaces;
 mod netlink;
 mod rpc;
@@ -53,8 +52,10 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::List => {
-            let ports = ovs::list_ports(&cfg.bridge_name)?;
-            for p in ports { println!("{}", p); }
+            let names = nmcli_dyn::list_connection_names()?;
+            for p in names.into_iter().filter(|n| n.starts_with("dyn-eth-")) {
+                println!("{}", p.trim_start_matches("dyn-eth-"));
+            }
             Ok(())
         }
         Commands::Introspect => {

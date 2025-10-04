@@ -8,7 +8,7 @@ use log::{info, warn};
 use std::{collections::BTreeSet, path::PathBuf};
 use tokio::time::{sleep, Duration, Instant};
 // use std::fs; // reserved for future inotify
-use rtnetlink::{new_connection};
+use rtnetlink::new_connection;
 use futures_util::TryStreamExt;
 
 pub async fn monitor_links(
