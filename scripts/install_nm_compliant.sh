@@ -165,6 +165,8 @@ create_ovs_bridge() {
 # Create internal port for bridge IP assignment
 create_internal_port() {
     local bridge_name="$1"
+    local ip_addr="${2:-}"
+    local gateway="${3:-}"
     local port_name="${bridge_name}-port-int"
     local if_name="$bridge_name"
     
@@ -188,7 +190,7 @@ create_internal_port() {
         return 1
     }
     
-    # Create OVS interface - always fresh with master defined from start
+    # Create OVS interface with IP configuration if provided
     local if_conn_name="${bridge_name}-if"
     
     if nmcli -t -f NAME connection show "$if_conn_name" >/dev/null 2>&1; then
@@ -196,15 +198,38 @@ create_internal_port() {
         nmcli connection delete "$if_conn_name" 2>/dev/null || true
     fi
     
-    nmcli connection add \
-        type ovs-interface \
-        con-name "$if_conn_name" \
-        ifname "$if_name" \
-        connection.master "$port_name" \
-        connection.slave-type ovs-port \
-        connection.autoconnect yes \
-        connection.autoconnect-priority 95 \
-        ovs-interface.type internal || {
+    # Build the command with IP configuration if provided
+    local cmd=(
+        nmcli connection add
+        type ovs-interface
+        con-name "$if_conn_name"
+        ifname "$if_name"
+        connection.master "$port_name"
+        connection.slave-type ovs-port
+        connection.autoconnect yes
+        connection.autoconnect-priority 95
+        ovs-interface.type internal
+    )
+    
+    # Add IP configuration if provided
+    if [[ -n "$ip_addr" ]]; then
+        log_info "Configuring IP $ip_addr on ovs-interface $if_conn_name"
+        cmd+=(
+            ipv4.method manual
+            ipv4.addresses "$ip_addr"
+            ipv6.method disabled
+        )
+        if [[ -n "$gateway" ]]; then
+            cmd+=(ipv4.gateway "$gateway")
+        fi
+    else
+        cmd+=(
+            ipv4.method disabled
+            ipv6.method disabled
+        )
+    fi
+    
+    "${cmd[@]}" || {
         log_error "Failed to create interface $if_conn_name"
         return 1
     }
@@ -212,32 +237,8 @@ create_internal_port() {
     log_info "Internal port configured for bridge $bridge_name"
 }
 
-# Configure IP address on bridge interface
-configure_ip_address() {
-    local if_conn_name="$1"
-    local ip_addr="$2"
-    local gateway="$3"
-    
-    log_info "Configuring IP $ip_addr on $if_conn_name"
-    
-    local args=(
-        connection modify "$if_conn_name"
-        ipv4.method manual
-        ipv4.addresses "$ip_addr"
-        ipv6.method disabled
-    )
-    
-    if [[ -n "$gateway" ]]; then
-        args+=(ipv4.gateway "$gateway")
-    fi
-    
-    nmcli "${args[@]}" || {
-        log_error "Failed to configure IP on $if_conn_name"
-        return 1
-    }
-    
-    log_info "IP address configured on $if_conn_name"
-}
+# Configure IP address - not needed as separate function
+# IP should be configured when creating the ovs-interface connection
 
 # Create uplink port
 create_uplink_port() {
@@ -540,13 +541,8 @@ main() {
     # Create bridge
     create_ovs_bridge "$BRIDGE"
     
-    # Create internal port and interface
-    create_internal_port "$BRIDGE"
-    
-    # Configure IP if provided
-    if [[ -n "$NM_IP" ]]; then
-        configure_ip_address "${BRIDGE}-if" "$NM_IP" "$NM_GW"
-    fi
+    # Create internal port and interface with IP configuration
+    create_internal_port "$BRIDGE" "$NM_IP" "$NM_GW"
     
     # Create uplink port and enslaved interface if provided
     if [[ -n "$UPLINK" ]]; then
@@ -562,11 +558,7 @@ main() {
         log_info "Creating secondary bridge ovsbr1"
         
         create_ovs_bridge "ovsbr1"
-        create_internal_port "ovsbr1"
-        
-        if [[ -n "$OVSBR1_IP" ]]; then
-            configure_ip_address "ovsbr1-if" "$OVSBR1_IP" "$OVSBR1_GW"
-        fi
+        create_internal_port "ovsbr1" "$OVSBR1_IP" "$OVSBR1_GW"
         
         if [[ -n "$OVSBR1_UPLINK" ]]; then
             create_uplink_port "ovsbr1" "$OVSBR1_UPLINK"
