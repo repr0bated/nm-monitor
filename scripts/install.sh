@@ -100,7 +100,8 @@ if command -v nmcli >/dev/null 2>&1; then
   # Create an internal ovs-interface for L3 on the bridge via an ovs-port
   INT_PORT_NAME="${BRIDGE}-port-int"
   if ! nmcli -t -f NAME c show | grep -qx "${INT_PORT_NAME}"; then
-    nmcli c add type ovs-port con-name "${INT_PORT_NAME}" master "${BRIDGE}"
+    # For the internal port, ifname must equal the internal interface name (bridge name)
+    nmcli c add type ovs-port con-name "${INT_PORT_NAME}" ifname "${BRIDGE}" master "${BRIDGE}"
   fi
   if ! nmcli -t -f NAME c show | grep -qx "${BRIDGE}-if"; then
     nmcli c add type ovs-interface con-name "${BRIDGE}-if" ifname "${BRIDGE}" master "${INT_PORT_NAME}"
@@ -142,7 +143,8 @@ if [[ "$WITH_OVSBR1" == 1 ]]; then
     fi
     OVSBR1_INT_PORT_NAME="ovsbr1-port-int"
     if ! nmcli -t -f NAME c show | grep -qx "${OVSBR1_INT_PORT_NAME}"; then
-      nmcli c add type ovs-port con-name "${OVSBR1_INT_PORT_NAME}" master "ovsbr1"
+      # Internal port for ovsbr1 must use ifname equal to bridge name
+      nmcli c add type ovs-port con-name "${OVSBR1_INT_PORT_NAME}" ifname "ovsbr1" master "ovsbr1"
     fi
     if ! nmcli -t -f NAME c show | grep -qx "ovsbr1-if"; then
       nmcli c add type ovs-interface con-name "ovsbr1-if" ifname "ovsbr1" master "${OVSBR1_INT_PORT_NAME}"
