@@ -57,7 +57,7 @@ nmcli connection add \
     connection.slave-type ovs-bridge \
     connection.autoconnect no
 
-# 3. Internal interface with IP - autoconnect disabled (slave of slave)
+# 3. Internal interface with IP configuration on the ovs-interface connection
 CMD=(nmcli connection add \
     type ovs-interface \
     con-name "${BRIDGE}-if" \
