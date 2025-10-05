@@ -11,7 +11,13 @@ pub fn container_eth_name(container: &str, index: u16) -> String {
 
     let mut base: String = container
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
         .collect();
 
     if base.len() > max_base_len {
@@ -49,19 +55,31 @@ pub fn render_template(template: &str, container: &str, index: u16) -> String {
 fn sanitize15(s: &str) -> String {
     let mut out: String = s
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c.to_ascii_lowercase() } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
         .collect();
     if out.len() <= 15 {
         return out;
     }
     // Keep suffix after last separator if any, otherwise trim and add hash
     let suffix_pos = out.rfind(['_', '-']).unwrap_or(0);
-    let suffix_owned: String = if suffix_pos > 0 { out[suffix_pos..].to_string() } else { String::new() };
+    let suffix_owned: String = if suffix_pos > 0 {
+        out[suffix_pos..].to_string()
+    } else {
+        String::new()
+    };
     let max_base = 15usize.saturating_sub(suffix_owned.len());
     if max_base > 0 {
         out.truncate(max_base);
         out.push_str(&suffix_owned);
-        if out.len() <= 15 { return out; }
+        if out.len() <= 15 {
+            return out;
+        }
     }
     // Final fallback: hash
     let mut hasher = Sha1::new();

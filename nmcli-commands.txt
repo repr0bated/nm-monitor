@@ -1,0 +1,19 @@
+# Create the OVS bridge
+nmcli conn add type ovs-bridge conn.interface br0 con-name ovs-bridge-br0
+
+# Add an OVS port for the bridge interface
+nmcli conn add type ovs-port conn.interface br0 master br0 con-name ovs-port-br0
+
+# Assign IP address via ovs-interface with DHCP
+nmcli conn add type ovs-interface slave-type ovs-port conn.interface br0 master ovs-port-br0 con-name ovs-if-br0 ipv4.method auto
+
+# Add a physical interface port
+nmcli conn add type ovs-port conn.interface enp2s0 master br0 con-name ovs-port-enp2s0
+
+# Enslave the physical interface
+nmcli conn add type ethernet conn.interface enp2s0 master ovs-port-enp2s0 con-name ovs-if-enp2s0
+
+# Activate the connections
+nmcli con up ovs-bridge-br0
+nmcli con up ovs-if-br0
+nmcli con up ovs-if-enp2s0

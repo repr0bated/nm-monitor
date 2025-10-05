@@ -1,15 +1,15 @@
 use crate::interfaces::update_interfaces_block;
-use crate::nmcli_dyn;
-use crate::naming::render_template;
 use crate::ledger::Ledger;
 use crate::link;
+use crate::naming::render_template;
+use crate::nmcli_dyn;
 use anyhow::{Context, Result};
 use log::{info, warn};
 use std::{collections::BTreeSet, path::PathBuf};
 use tokio::time::{sleep, Duration, Instant};
 // use std::fs; // reserved for future inotify
-use rtnetlink::new_connection;
 use futures_util::TryStreamExt;
+use rtnetlink::new_connection;
 
 pub async fn monitor_links(
     bridge: String,
@@ -19,8 +19,10 @@ pub async fn monitor_links(
     enable_rename: bool,
     naming_template: String,
     ledger_path: String,
+    uplink: Option<String>,
 ) -> Result<()> {
     let interfaces_path = PathBuf::from(interfaces_path);
+    let configured_uplink = uplink;
 
     // Start rtnetlink listener
     let (conn, handle, _) = new_connection().context("create rtnetlink connection")?;
@@ -39,6 +41,7 @@ pub async fn monitor_links(
         enable_rename,
         &naming_template,
         &ledger_path,
+        configured_uplink.as_deref(),
     ) {
         warn!("initial reconcile failed: {err:?}");
     }
@@ -63,6 +66,7 @@ pub async fn monitor_links(
                 enable_rename,
                 &naming_template,
                 &ledger_path,
+                configured_uplink.as_deref(),
             ) {
                 warn!("reconcile failed: {err:?}");
             }
@@ -78,6 +82,7 @@ fn reconcile_once(
     enable_rename: bool,
     naming_template: &str,
     ledger_path: &str,
+    configured_uplink: Option<&str>,
 ) -> Result<()> {
     // Desired: all interfaces in /sys/class/net matching prefixes
     let desired_raw = list_sys_class_net(include_prefixes)?;
@@ -85,7 +90,8 @@ fn reconcile_once(
     let mut desired = BTreeSet::new();
     for raw in desired_raw.iter() {
         let target = if enable_rename {
-            let base = crate::link::container_short_name_from_ifname(raw).unwrap_or_else(|| raw.clone());
+            let base =
+                crate::link::container_short_name_from_ifname(raw).unwrap_or_else(|| raw.clone());
             // naive index=0 until container index is resolved
             render_template(naming_template, &base, 0)
         } else {
@@ -127,21 +133,55 @@ fn reconcile_once(
         nmcli_dyn::ensure_dynamic_port(&bridge, name)
             .with_context(|| format!("nmcli add dyn port for {name}"))?;
         let mut lg = Ledger::open(PathBuf::from(ledger_path))?;
-        let _ = lg.append("nm_add_dyn_port", serde_json::json!({"port": name, "bridge": bridge}));
+        let _ = lg.append(
+            "nm_add_dyn_port",
+            serde_json::json!({"port": name, "bridge": bridge}),
+        );
     }
     for name in to_del.iter() {
         nmcli_dyn::remove_dynamic_port(name)
             .with_context(|| format!("nmcli remove dyn port for {name}"))?;
         let mut lg = Ledger::open(PathBuf::from(ledger_path))?;
-        let _ = lg.append("nm_del_dyn_port", serde_json::json!({"port": name, "bridge": bridge}));
+        let _ = lg.append(
+            "nm_del_dyn_port",
+            serde_json::json!({"port": name, "bridge": bridge}),
+        );
     }
 
     // Write bounded block for visibility in Proxmox
     let mut names: Vec<String> = desired.into_iter().collect();
     names.sort();
-    update_interfaces_block(interfaces_path, managed_tag, &names, bridge)?;
+
+    // Prefer configured uplink; fall back to detection if not provided
+    let uplink = if let Some(explicit) = configured_uplink {
+        Some(explicit.to_string())
+    } else {
+        detect_bridge_uplink(bridge)
+    };
+
+    update_interfaces_block(
+        interfaces_path,
+        managed_tag,
+        &names,
+        bridge,
+        uplink.as_deref(),
+    )?;
 
     Ok(())
+}
+
+fn detect_bridge_uplink(bridge: &str) -> Option<String> {
+    // Try to detect uplink from NM connections
+    let conns = nmcli_dyn::list_connection_names().ok()?;
+    for conn in conns {
+        if conn.starts_with(&format!("{bridge}-uplink-")) {
+            return Some(
+                conn.trim_start_matches(&format!("{bridge}-uplink-"))
+                    .to_string(),
+            );
+        }
+    }
+    None
 }
 
 fn list_sys_class_net(include_prefixes: &[String]) -> Result<BTreeSet<String>> {
