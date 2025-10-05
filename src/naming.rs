@@ -44,7 +44,7 @@ pub fn container_eth_name(container: &str, index: u16) -> String {
     format!("{trimmed}{separator}{short}{suffix}")
 }
 
-/// Render from template like "veth-{container}-eth{index}", sanitize, and trim to 15 chars
+/// Render from template like "vi{container}", sanitize, and trim to 15 chars
 pub fn render_template(template: &str, container: &str, index: u16) -> String {
     let rendered = template
         .replace("{container}", container)
@@ -66,28 +66,13 @@ fn sanitize15(s: &str) -> String {
     if out.len() <= 15 {
         return out;
     }
-    // Keep suffix after last separator if any, otherwise trim and add hash
-    let suffix_pos = out.rfind(['_', '-']).unwrap_or(0);
-    let suffix_owned: String = if suffix_pos > 0 {
-        out[suffix_pos..].to_string()
-    } else {
-        String::new()
-    };
-    let max_base = 15usize.saturating_sub(suffix_owned.len());
-    if max_base > 0 {
-        out.truncate(max_base);
-        out.push_str(&suffix_owned);
-        if out.len() <= 15 {
-            return out;
-        }
-    }
-    // Final fallback: hash
+
+    // Truncate to 15 chars with hash for uniqueness
     let mut hasher = Sha1::new();
     hasher.update(s.as_bytes());
     let short = &hex::encode(hasher.finalize())[..2];
-    let keep = 15usize.saturating_sub(3); // _ + 2 hex
+    let keep = 15usize.saturating_sub(2); // 2 hex chars at end
     let mut base: String = out.chars().take(keep).collect();
-    base.push('_');
     base.push_str(short);
     base
 }

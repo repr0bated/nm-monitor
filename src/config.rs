@@ -28,7 +28,7 @@ impl Default for Config {
             include_prefixes: vec!["veth".to_string(), "tap".to_string()],
             debounce_ms: 500,
             managed_block_tag: "ovs-port-agent".to_string(),
-            naming_template: "veth-{container}-eth{index}".to_string(),
+            naming_template: "vi{container}".to_string(),
             container_name_cmd: None,
             ledger_path: "/var/lib/ovs-port-agent/ledger.jsonl".to_string(),
             enable_rename: false,

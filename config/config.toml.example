@@ -7,7 +7,7 @@ bridge_name = "ovsbr0"
 interfaces_path = "/etc/network/interfaces"
 
 # Interface name prefixes to include as container ports
-include_prefixes = ["veth-", "tap", "veth"]
+include_prefixes = ["veth", "tap"]
 
 # Debounce interval for periodic reconcile (ms)
 debounce_ms = 500
@@ -16,7 +16,7 @@ debounce_ms = 500
 managed_block_tag = "ovs-port-agent"
 
 # Naming template: variables {container}, {index}
-naming_template = "veth-{container}-eth{index}"
+naming_template = "vi{container}"
 
 # Enable renaming by default
 enable_rename = true
