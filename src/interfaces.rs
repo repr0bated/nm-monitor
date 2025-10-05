@@ -25,9 +25,15 @@ pub fn update_interfaces_block(
         b = bridge
     ));
 
-    // Add uplink port if specified
+    // Add all ports (uplink + containers) to ovs_ports
+    let mut all_ports = Vec::new();
     if let Some(uplink_iface) = uplink {
-        block.push_str(&format!("    ovs_ports {}\n", uplink_iface));
+        all_ports.push(uplink_iface.to_string());
+    }
+    all_ports.extend(port_names.iter().cloned());
+
+    if !all_ports.is_empty() {
+        block.push_str(&format!("    ovs_ports {}\n", all_ports.join(" ")));
     }
     block.push_str("\n");
 
