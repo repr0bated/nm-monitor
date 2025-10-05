@@ -13,6 +13,11 @@ pub struct Config {
     pub container_name_cmd: Option<String>,
     pub ledger_path: String,
     pub enable_rename: bool,
+    /// Physical uplink interface for the bridge (e.g., "enp2s0")
+    pub uplink: Option<String>,
+    /// Interfaces that NetworkManager should NOT manage (for unmanaged-devices list)
+    #[serde(default)]
+    pub nm_unmanaged: Vec<String>,
 }
 
 impl Default for Config {
@@ -27,6 +32,8 @@ impl Default for Config {
             container_name_cmd: None,
             ledger_path: "/var/lib/ovs-port-agent/ledger.jsonl".to_string(),
             enable_rename: false,
+            uplink: None,
+            nm_unmanaged: vec![],
         }
     }
 }
@@ -34,11 +41,15 @@ impl Default for Config {
 impl Config {
     pub fn load(path: Option<&Path>) -> Result<Self> {
         // Try explicit path, then /etc, then project-local config/example
-        let candidates = if let Some(p) = path { vec![p.to_path_buf()] } else { vec![
-            "/etc/ovs-port-agent/config.toml".into(),
-            "config/config.toml".into(),
-            "config/config.toml.example".into(),
-        ]};
+        let candidates = if let Some(p) = path {
+            vec![p.to_path_buf()]
+        } else {
+            vec![
+                "/etc/ovs-port-agent/config.toml".into(),
+                "config/config.toml".into(),
+                "config/config.toml.example".into(),
+            ]
+        };
 
         for candidate in candidates {
             if candidate.exists() {

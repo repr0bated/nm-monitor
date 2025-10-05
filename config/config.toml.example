@@ -26,3 +26,7 @@ enable_rename = true
 
 # Ledger file for append-only audit (hash chain JSON lines)
 ledger_path = "/var/lib/ovs-port-agent/ledger.jsonl"
+
+# Optional overrides
+# uplink = "enp2s0"
+# nm_unmanaged = ["lo", "docker0"]
