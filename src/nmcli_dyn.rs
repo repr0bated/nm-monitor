@@ -31,12 +31,17 @@ pub fn ensure_dynamic_port(bridge: &str, ifname: &str) -> Result<()> {
         port_name, bridge, ifname
     );
 
-    // Check if port already exists
-    let exists = connection_exists(&port_name)?;
+    // Check if port already exists and is active
+    let port_active = is_connection_active(&port_name)?;
 
-    if exists {
-        // Delete and recreate to ensure clean state
-        debug!("Deleting existing OVS port {} for recreation", port_name);
+    if port_active {
+        debug!("OVS port {} already exists and is active, skipping", port_name);
+        return Ok(());
+    }
+
+    // Only delete if exists but is not active
+    if connection_exists(&port_name)? {
+        debug!("Deleting inactive OVS port {} for recreation", port_name);
         let _ = Command::new("nmcli")
             .args(["connection", "delete", &port_name])
             .output();
@@ -143,6 +148,26 @@ fn connection_exists(name: &str) -> Result<bool> {
         .context("Failed to check connection existence")?;
 
     Ok(output.status.success())
+}
+
+fn is_connection_active(name: &str) -> Result<bool> {
+    let output = Command::new("nmcli")
+        .args(["-t", "-f", "NAME,STATE", "connection", "show", "--active"])
+        .output()
+        .context("Failed to check active connections")?;
+
+    if !output.status.success() {
+        return Ok(false);
+    }
+
+    let active_conns = String::from_utf8_lossy(&output.stdout);
+    for line in active_conns.lines() {
+        let parts: Vec<&str> = line.split(':').collect();
+        if parts.len() >= 2 && parts[0] == name && parts[1] == "activated" {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 pub fn remove_dynamic_port(ifname: &str) -> Result<()> {
