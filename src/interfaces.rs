@@ -37,10 +37,18 @@ pub fn update_interfaces_block(
     }
     block.push_str("\n");
 
+    // Internal interface for the bridge
+    let internal_if = format!("{}-if", bridge);
+    block.push_str(&format!(
+        "auto {i}\niface {i} inet manual\n    ovs_type OVSIntPort\n    ovs_bridge {b}\n\n",
+        i = internal_if,
+        b = bridge
+    ));
+
     // Uplink physical port (if specified)
     if let Some(uplink_iface) = uplink {
         block.push_str(&format!(
-            "allow-{b} {u}\niface {u} inet manual\n    ovs_bridge {b}\n    ovs_type OVSPort\n\n",
+            "iface {u} inet manual\n    ovs_bridge {b}\n    ovs_type OVSPort\n\n",
             b = bridge,
             u = uplink_iface
         ));
@@ -52,7 +60,7 @@ pub fn update_interfaces_block(
     } else {
         for name in port_names {
             block.push_str(&format!(
-                "allow-ovs {n}\niface {n} inet manual\n    ovs_type OVSPort\n    ovs_bridge {b}\n\n",
+                "auto {n}\niface {n} inet manual\n    ovs_type OVSIntPort\n    ovs_bridge {b}\n\n",
                 n = name,
                 b = bridge
             ));
