@@ -1,16 +1,18 @@
 mod config;
-mod logging;
-mod naming;
 mod interfaces;
-mod netlink;
-mod rpc;
 mod ledger;
 mod link;
+mod logging;
+mod naming;
+mod netlink;
+mod nm_bridge;
+mod nm_config;
 mod nmcli_dyn;
+mod rpc;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use log::{error, info};
+use log::{error, info, warn};
 use std::path::PathBuf;
 use tokio::signal;
 
@@ -58,17 +60,28 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
-        Commands::Introspect => {
-            rpc::introspect_nm().await
-        }
+        Commands::Introspect => rpc::introspect_nm().await,
     }
 }
 
 async fn run_agent(cfg: config::Config) -> Result<()> {
     info!("starting ovs-port-agent on bridge {}", cfg.bridge_name);
 
+    // Ensure the bridge and optional uplink exist under NetworkManager control
+    nm_bridge::ensure_bridge_topology(&cfg.bridge_name, cfg.uplink.as_deref(), 45)?;
+
+    // Write NetworkManager unmanaged-devices config
+    if !cfg.nm_unmanaged.is_empty() {
+        if let Err(e) = nm_config::write_unmanaged_devices(&cfg.nm_unmanaged) {
+            warn!("failed to write NM unmanaged-devices config: {:?}", e);
+        }
+    }
+
     // Start D-Bus service (best-effort)
-    let state = rpc::AppState { bridge: cfg.bridge_name.clone(), ledger_path: cfg.ledger_path.clone() };
+    let state = rpc::AppState {
+        bridge: cfg.bridge_name.clone(),
+        ledger_path: cfg.ledger_path.clone(),
+    };
     let _rpc_handle = tokio::spawn(rpc::serve_with_state(state));
 
     // Start link monitor (best-effort). For now, periodic reconcile.
@@ -79,6 +92,7 @@ async fn run_agent(cfg: config::Config) -> Result<()> {
     let enable_rename = cfg.enable_rename;
     let naming_template = cfg.naming_template.clone();
     let ledger_path = cfg.ledger_path.clone();
+    let uplink = cfg.uplink.clone();
 
     let monitor_handle = tokio::spawn(async move {
         if let Err(err) = netlink::monitor_links(
@@ -89,7 +103,10 @@ async fn run_agent(cfg: config::Config) -> Result<()> {
             enable_rename,
             naming_template,
             ledger_path,
-        ).await {
+            uplink,
+        )
+        .await
+        {
             error!("link monitor exited with error: {err:?}");
         }
     });

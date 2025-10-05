@@ -4,7 +4,8 @@ After=network-online.target openvswitch-switch.service
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=dbus
+BusName=dev.ovs.PortAgent1
 ExecStart=/usr/local/bin/ovs-port-agent /etc/ovs-port-agent/config.toml
 Restart=on-failure
 RestartSec=2s
@@ -12,6 +13,7 @@ StandardOutput=journal
 StandardError=journal
 AmbientCapabilities=CAP_NET_ADMIN
 CapabilityBoundingSet=CAP_NET_ADMIN
+SupplementaryGroups=netdev
 
 [Install]
 WantedBy=multi-user.target
