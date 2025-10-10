@@ -84,11 +84,12 @@ Options:
 
 Note: Before installation, comprehensive cleanup will be performed including:
 - NetworkManager connections (except uplink and system interfaces)
+- Legacy dyn-port/dyn-eth connections (from old monitoring system)
 - systemd-networkd configurations
 - Open vSwitch bridges and ports (including target bridges ovsbr0/ovsbr1)
 - /etc/network/interfaces cleanup
 - D-Bus service refresh
-This ensures a completely clean slate - all bridges will be recreated from scratch.
+This ensures a completely clean slate - all bridges and connections will be recreated from scratch.
 USAGE
 }
 
@@ -160,6 +161,14 @@ cleanup_all_networking() {
     while IFS=':' read -r conn_name uuid conn_type; do
       [[ -z "${conn_name}" ]] && continue
 
+      # Check connection type and decide what to do
+      if [[ "${conn_name}" =~ ^dyn-(port|eth)- ]]; then
+        # Legacy dyn-port/dyn-eth connections from old monitoring system - delete
+        echo "Marking for deletion - legacy dyn connection: ${conn_name}"
+        connections_to_delete+=("${conn_name}")
+        continue
+      fi
+
       # Preserve essential system connections and uplink
       case "${conn_name}" in
         lo|docker0|virbr0|ovs-system)
@@ -172,11 +181,11 @@ cleanup_all_networking() {
             echo "Preserving uplink connection: ${conn_name}"
             continue
           fi
+
+          # Delete everything else
+          connections_to_delete+=("${conn_name}")
           ;;
       esac
-
-      # Delete everything else
-      connections_to_delete+=("${conn_name}")
     done <<< "${all_conns}"
 
     # Delete the connections we identified
@@ -191,6 +200,13 @@ cleanup_all_networking() {
       for conn_file in /etc/NetworkManager/system-connections/*; do
         [[ -f "${conn_file}" ]] || continue
         conn_name=$(basename "${conn_file}")
+
+        # Check if this is a legacy dyn-port or dyn-eth connection file
+        if [[ "${conn_name}" =~ ^dyn-(port|eth)- ]]; then
+          echo "Removing legacy dyn connection file: ${conn_name}"
+          rm -f "${conn_file}" 2>/dev/null || true
+          continue
+        fi
 
         # Skip essential connections
         case "${conn_name}" in
@@ -320,7 +336,7 @@ EOF
 
   echo "Comprehensive network cleanup complete!"
   echo "Preserved: uplink (${uplink:-none}) and essential system interfaces"
-  echo "Cleaned: All OVS bridges (including ovsbr0/ovsbr1) - will be recreated by installation"
+  echo "Cleaned: All OVS bridges (including ovsbr0/ovsbr1), legacy dyn-port connections"
   echo "Backups created in ${BACKUP_DIR} for rollback capability"
 }
 
