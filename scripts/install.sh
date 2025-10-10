@@ -45,6 +45,10 @@ cd "${REPO_ROOT}" || {
 
 echo "Successfully changed to repository directory: $(pwd)"
 
+# Backup and snapshot management for rollback capability
+BACKUP_DIR="/var/lib/ovs-port-agent/backups"
+SNAPSHOT_NAME="ovs-port-agent-preinstall"
+
 # ============================================================================
 # ATOMIC HANDOVER PREPARATION - BEFORE ANY DISRUPTIVE OPERATIONS
 # ============================================================================
@@ -120,10 +124,6 @@ fi
 
 echo "🔄 Phase 2: Connectivity-preserving cleanup"
 echo "==========================================="
-
-# Backup and snapshot management for rollback capability
-BACKUP_DIR="/var/lib/ovs-port-agent/backups"
-SNAPSHOT_NAME="ovs-port-agent-preinstall"
 
 create_backups() {
   echo "Creating system backups for rollback capability..."
