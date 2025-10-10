@@ -121,7 +121,7 @@ fn reconcile_once(
                     let mut lg = Ledger::open(PathBuf::from(ledger_path))?;
                     let _ = lg.append(
                         "rename",
-                        serde_json::json!({"old": raw, "new": target, "bridge": bridge}),
+                        serde_json::json!({"old": raw, "new": target, "interface": target, "bridge": bridge}),
                     );
                 }
             }
@@ -150,7 +150,7 @@ fn reconcile_once(
         let mut lg = Ledger::open(PathBuf::from(ledger_path))?;
         let _ = lg.append(
             "nm_add_dyn_port",
-            serde_json::json!({"port": name, "bridge": bridge}),
+            serde_json::json!({"port": name, "interface": name, "bridge": bridge}),
         );
 
         // Create FUSE bind mount for Proxmox visibility
@@ -169,7 +169,7 @@ fn reconcile_once(
         let mut lg = Ledger::open(PathBuf::from(ledger_path))?;
         let _ = lg.append(
             "nm_del_dyn_port",
-            serde_json::json!({"port": name, "bridge": bridge}),
+            serde_json::json!({"port": name, "interface": name, "bridge": bridge}),
         );
     }
 

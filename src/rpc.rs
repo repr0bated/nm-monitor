@@ -48,7 +48,7 @@ impl PortAgent {
         if let Ok(mut lg) = Ledger::open(PathBuf::from(&self.state.ledger_path)) {
             let _ = lg.append(
                 "dbus_add_port",
-                serde_json::json!({"port": name, "bridge": self.state.bridge}),
+                serde_json::json!({"port": name, "interface": name, "bridge": self.state.bridge}),
             );
         }
         Ok(())
@@ -61,7 +61,7 @@ impl PortAgent {
         if let Ok(mut lg) = Ledger::open(PathBuf::from(&self.state.ledger_path)) {
             let _ = lg.append(
                 "dbus_del_port",
-                serde_json::json!({"port": name, "bridge": self.state.bridge}),
+                serde_json::json!({"port": name, "interface": name, "bridge": self.state.bridge}),
             );
         }
         Ok(())
