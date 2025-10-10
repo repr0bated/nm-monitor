@@ -78,8 +78,7 @@ Options:
   --bridge NAME     Set bridge_name in the agent config (default: ovsbr0)
   --prefix DIR      Installation prefix for the binary (default: /usr/local)
   --uplink IFACE    Physical interface to enslave to the bridge (optional)
-  --with-ovsbr1     Also create secondary bridge ovsbr1 (DHCP)
-  --ovsbr1-uplink IFACE  Physical interface to attach as ovsbr1 uplink (optional)
+  --with-ovsbr1     Also create secondary bridge ovsbr1 (DHCP, no uplink needed)
   --system          Enable and start the systemd service after installing
   --help            Show this help message
 
@@ -98,7 +97,6 @@ PREFIX="/usr/local"
 SYSTEM=0
 UPLINK=""
 CREATE_OVSBR1=0
-OVSBR1_UPLINK=""
 
 cleanup_all_networking() {
   local uplink="$1"
@@ -391,6 +389,54 @@ ensure_nm_bridge() {
   nmcli connection up "${iface_conn}"  >/dev/null 2>&1 || true
 }
 
+ensure_nm_bridge_ovsbr1() {
+  local bridge_name="$1"
+
+  if ! command -v nmcli >/dev/null 2>&1; then
+    echo "nmcli not found; skipping NetworkManager ovsbr1 setup"
+    return
+  fi
+
+  if ! systemctl is-active --quiet NetworkManager; then
+    echo "NetworkManager is not active; skipping ovsbr1 setup"
+    return
+  fi
+
+  local bridge_conn="ovs-bridge-${bridge_name}"
+  local port_conn="ovs-port-${bridge_name}"
+  local iface_conn="ovs-if-${bridge_name}"
+
+  echo "Creating ovsbr1 as isolated bridge (no uplink, DHCP-enabled)"
+
+  # Create bridge with DHCP capability for internal networking
+  nmcli connection add type ovs-bridge \
+    conn.interface "${bridge_name}" \
+    con-name "${bridge_conn}" \
+    ipv4.method auto \
+    ipv6.method disabled >/dev/null
+
+  # Create internal port for the bridge
+  nmcli connection add type ovs-port \
+    conn.interface "${bridge_name}" \
+    master "${bridge_name}" \
+    con-name "${port_conn}" >/dev/null
+
+  # Create internal interface with DHCP
+  nmcli connection add type ovs-interface \
+    slave-type ovs-port \
+    conn.interface "${bridge_name}" \
+    master "${port_conn}" \
+    con-name "${iface_conn}" \
+    ipv4.method auto \
+    ipv6.method disabled >/dev/null
+
+  echo "Activating ovsbr1 bridge..."
+  nmcli connection up "${bridge_conn}" >/dev/null 2>&1 || true
+  nmcli connection up "${iface_conn}" >/dev/null 2>&1 || true
+
+  echo "ovsbr1 created successfully as DHCP-enabled bridge"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --bridge)
@@ -406,9 +452,6 @@ while [[ $# -gt 0 ]]; do
       UPLINK="$2"; shift 2;;
     --with-ovsbr1)
       CREATE_OVSBR1=1; shift;;
-    --ovsbr1-uplink)
-      [[ $# -ge 2 ]] || { echo "Missing value for --ovsbr1-uplink" >&2; exit 1; }
-      OVSBR1_UPLINK="$2"; shift 2;;
     --help|-h)
       usage; exit 0;;
     *)
@@ -491,7 +534,9 @@ cleanup_all_networking "${UPLINK}"
 
 ensure_nm_bridge "${BRIDGE}" "${UPLINK}"
 if (( CREATE_OVSBR1 )); then
-  ensure_nm_bridge "ovsbr1" "${OVSBR1_UPLINK}"
+  # Clean up ovsbr1 separately since it has no uplink
+  cleanup_all_networking ""
+  ensure_nm_bridge_ovsbr1 "ovsbr1"
 fi
 
 if command -v journalctl >/dev/null 2>&1; then
