@@ -1,9 +1,49 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-REPO_ROOT=$(cd -- "${SCRIPT_DIR}/.." && pwd)
-cd "${REPO_ROOT}"
+# Get the absolute path of the script, resolving any symlinks
+if command -v readlink >/dev/null 2>&1; then
+  SCRIPT_PATH=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null)
+fi
+
+if [[ -z "${SCRIPT_PATH:-}" ]] && command -v realpath >/dev/null 2>&1; then
+  SCRIPT_PATH=$(realpath "${BASH_SOURCE[0]}" 2>/dev/null)
+fi
+
+# Fallback to basic method if readlink/realpath not available
+if [[ -z "${SCRIPT_PATH:-}" ]]; then
+  SCRIPT_PATH="${BASH_SOURCE[0]}"
+  # Try to resolve relative paths
+  if [[ "${SCRIPT_PATH}" != /* ]]; then
+    SCRIPT_PATH="$(pwd)/${SCRIPT_PATH}"
+  fi
+fi
+
+SCRIPT_DIR=$(cd -- "$(dirname "${SCRIPT_PATH}")" && pwd -P 2>/dev/null || dirname "${SCRIPT_PATH}")
+REPO_ROOT=$(cd -- "${SCRIPT_DIR}/.." && pwd -P 2>/dev/null || echo "$(dirname "${SCRIPT_DIR}")")
+
+# Verify we can access the directories and debug info
+echo "Debug: Script path: ${SCRIPT_PATH}"
+echo "Debug: Script directory: ${SCRIPT_DIR}"
+echo "Debug: Repository root: ${REPO_ROOT}"
+
+if [[ ! -d "${SCRIPT_DIR}" ]]; then
+  echo "Error: Cannot access script directory: ${SCRIPT_DIR}" >&2
+  exit 1
+fi
+
+if [[ ! -d "${REPO_ROOT}" ]]; then
+  echo "Error: Cannot access repository root: ${REPO_ROOT}" >&2
+  exit 1
+fi
+
+cd "${REPO_ROOT}" || {
+  echo "Error: Cannot change to repository directory: ${REPO_ROOT}" >&2
+  echo "Current working directory: $(pwd)" >&2
+  exit 1
+}
+
+echo "Successfully changed to repository directory: $(pwd)"
 
 # Backup and snapshot management for rollback capability
 BACKUP_DIR="/var/lib/ovs-port-agent/backups"
