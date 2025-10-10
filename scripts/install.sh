@@ -5,6 +5,71 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd -- "${SCRIPT_DIR}/.." && pwd)
 cd "${REPO_ROOT}"
 
+# Backup and snapshot management for rollback capability
+BACKUP_DIR="/var/lib/ovs-port-agent/backups"
+SNAPSHOT_NAME="ovs-port-agent-preinstall"
+
+create_backups() {
+  echo "Creating system backups for rollback capability..."
+
+  # Create backup directory
+  install -d -m 0750 "${BACKUP_DIR}"
+
+  # Backup NetworkManager connections
+  if command -v nmcli >/dev/null 2>&1 && systemctl is-active --quiet NetworkManager; then
+    echo "Backing up NetworkManager connections..."
+    nmcli -t -f NAME,UUID connection show > "${BACKUP_DIR}/nm-connections.list" 2>/dev/null || true
+
+    # Backup system-connections directory
+    if [[ -d "/etc/NetworkManager/system-connections" ]]; then
+      cp -r /etc/NetworkManager/system-connections "${BACKUP_DIR}/" 2>/dev/null || true
+    fi
+  fi
+
+  # Backup /etc/network/interfaces
+  if [[ -f "/etc/network/interfaces" ]]; then
+    echo "Backing up /etc/network/interfaces..."
+    cp /etc/network/interfaces "${BACKUP_DIR}/interfaces.backup" 2>/dev/null || true
+  fi
+
+  # Backup OVS bridges if available
+  if command -v ovs-vsctl >/dev/null 2>&1; then
+    echo "Backing up OVS bridge configuration..."
+    ovs-vsctl list-br > "${BACKUP_DIR}/ovs-bridges.list" 2>/dev/null || true
+
+    # Backup OVS bridge configurations
+    for bridge in $(ovs-vsctl list-br 2>/dev/null || true); do
+      ovs-vsctl list "${bridge}" > "${BACKUP_DIR}/ovs-${bridge}.config" 2>/dev/null || true
+    done
+  fi
+
+  # Create Btrfs snapshot if available
+  if command -v btrfs >/dev/null 2>&1 && [[ -d "/.snapshots" ]]; then
+    echo "Creating Btrfs snapshot for rollback..."
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local snapshot_name="${SNAPSHOT_NAME}_${timestamp}"
+
+    # Create read-only snapshot of root filesystem
+    if mountpoint -q /; then
+      local root_device=$(findmnt -n -o SOURCE /)
+      if [[ "${root_device}" =~ ^/dev/ ]]; then
+        btrfs subvolume snapshot -r / "${snapshot_name}" 2>/dev/null || true
+        echo "Created Btrfs snapshot: ${snapshot_name}"
+        echo "${snapshot_name}" > "${BACKUP_DIR}/btrfs_snapshot"
+      fi
+    fi
+  fi
+
+  echo "Backups created in ${BACKUP_DIR}"
+}
+
+cleanup_backups() {
+  echo "Cleaning up old backup files..."
+  # Remove old backups older than 7 days
+  find "${BACKUP_DIR}" -type f -mtime +7 -delete 2>/dev/null || true
+  find "${BACKUP_DIR}" -type d -empty -delete 2>/dev/null || true
+}
+
 usage() {
   cat <<USAGE
 Usage: ./scripts/install.sh [options]
@@ -258,6 +323,7 @@ EOF
   echo "Comprehensive network cleanup complete!"
   echo "Preserved: uplink (${uplink:-none}) and essential system interfaces"
   echo "Cleaned: All OVS bridges (including ovsbr0/ovsbr1) - will be recreated by installation"
+  echo "Backups created in ${BACKUP_DIR} for rollback capability"
 }
 
 ensure_nm_bridge() {
@@ -417,6 +483,9 @@ install -m 0644 systemd/ovs-port-agent.service "${SYSTEMD_UNIT}"
 systemctl daemon-reload
 systemctl reload dbus.service 2>/dev/null || systemctl restart dbus.service
 
+# Create backups before making any changes
+create_backups
+
 # Clean up existing devices before creating new bridge setup
 cleanup_all_networking "${UPLINK}"
 
@@ -438,3 +507,10 @@ if (( SYSTEM )); then
 else
   echo "Installation complete. Start the service with: sudo systemctl enable --now ovs-port-agent"
 fi
+
+# Clean up old backups
+cleanup_backups
+
+echo "Installation completed successfully!"
+echo "Rollback script available at: ${REPO_ROOT}/scripts/rollback.sh"
+echo "Btrfs snapshot available for system-level rollback if needed"
