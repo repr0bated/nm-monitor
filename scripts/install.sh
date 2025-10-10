@@ -18,8 +18,13 @@ Options:
   --system          Enable and start the systemd service after installing
   --help            Show this help message
 
-Note: Before installation, all NetworkManager connections except uplink and lo
-will be removed to ensure a clean slate for the OVS bridge setup.
+Note: Before installation, comprehensive cleanup will be performed including:
+- NetworkManager connections (except uplink and system interfaces)
+- systemd-networkd configurations
+- Open vSwitch bridges and ports
+- /etc/network/interfaces cleanup
+- D-Bus service refresh
+This ensures a clean slate for the OVS bridge setup.
 USAGE
 }
 
@@ -30,93 +35,233 @@ UPLINK=""
 CREATE_OVSBR1=0
 OVSBR1_UPLINK=""
 
-cleanup_devices() {
+cleanup_all_networking() {
   local uplink="$1"
 
-  if ! command -v nmcli >/dev/null 2>&1; then
-    echo "nmcli not found; skipping NetworkManager cleanup"
-    return
+  echo "Starting comprehensive network cleanup..."
+
+  # 1. Clean up systemd-networkd (networkctl)
+  if command -v networkctl >/dev/null 2>&1; then
+    echo "Cleaning up systemd-networkd configurations..."
+    # Stop all networkd links except loopback
+    for link in $(networkctl list | awk '/ether|wlan|wwan/ {print $1}' | grep -v lo || true); do
+      networkctl down "${link}" 2>/dev/null || true
+    done
+
+    # Remove networkd .network files except lo
+    for netfile in /etc/systemd/network/*.network; do
+      [[ -f "${netfile}" ]] || continue
+      if ! grep -q "Name=lo" "${netfile}" 2>/dev/null; then
+        rm -f "${netfile}" 2>/dev/null || true
+      fi
+    done
+    systemctl reload systemd-networkd 2>/dev/null || true
   fi
 
-  if ! systemctl is-active --quiet NetworkManager; then
-    echo "NetworkManager is not active; skipping cleanup"
-    return
-  fi
+  # 2. Comprehensive NetworkManager cleanup
+  if command -v nmcli >/dev/null 2>&1; then
+    echo "Cleaning up NetworkManager connections..."
 
-  echo "Cleaning up existing NetworkManager connections..."
+    # Stop NetworkManager if running
+    systemctl stop NetworkManager 2>/dev/null || true
 
-  # Get list of all connections except system ones
-  local all_conns
-  all_conns=$(nmcli -t -f NAME,UUID,TYPE connection show || true)
+    local connections_to_delete=()
+    local uplink_connection=""
 
-  local connections_to_delete=()
-  local uplink_connection=""
+    # Find uplink connection if specified (check all possible locations)
+    if [[ -n "${uplink}" ]]; then
+      # Look for active connection on the uplink interface
+      uplink_connection=$(nmcli -t -f NAME,DEVICE connection show --active 2>/dev/null | grep ":${uplink}$" | cut -d: -f1 || true)
 
-  # Find uplink connection if specified
-  if [[ -n "${uplink}" ]]; then
-    # Look for active connection on the uplink interface
-    uplink_connection=$(nmcli -t -f NAME,DEVICE connection show --active | grep ":${uplink}$" | cut -d: -f1 || true)
+      # If not found in active connections, look in all connections
+      if [[ -z "${uplink_connection}" ]]; then
+        uplink_connection=$(nmcli -t -f NAME,DEVICE connection show 2>/dev/null | grep ":${uplink}$" | cut -d: -f1 || true)
+      fi
 
-    # If not found in active connections, look in all connections
-    if [[ -z "${uplink_connection}" ]]; then
-      uplink_connection=$(nmcli -t -f NAME,DEVICE connection show | grep ":${uplink}$" | cut -d: -f1 || true)
+      # Also check /etc/NetworkManager/system-connections for the uplink
+      if [[ -z "${uplink_connection}" ]] && [[ -d "/etc/NetworkManager/system-connections" ]]; then
+        uplink_connection=$(grep -l "interface-name=${uplink}" /etc/NetworkManager/system-connections/* 2>/dev/null | head -1 | xargs basename 2>/dev/null || true)
+      fi
+
+      if [[ -n "${uplink_connection}" ]]; then
+        echo "Preserving uplink connection: ${uplink_connection} (interface: ${uplink})"
+      else
+        echo "Warning: Uplink interface ${uplink} not found in NetworkManager connections"
+      fi
     fi
 
-    if [[ -n "${uplink_connection}" ]]; then
-      echo "Preserving uplink connection: ${uplink_connection} (interface: ${uplink})"
-    else
-      echo "Warning: Uplink interface ${uplink} not found in NetworkManager connections"
-    fi
-  fi
+    # Get all connections and filter what to delete
+    local all_conns
+    all_conns=$(nmcli -t -f NAME,UUID,TYPE connection show 2>/dev/null || true)
 
-  # Parse connections and decide what to delete
-  while IFS=':' read -r conn_name uuid conn_type; do
-    # Preserve essential system connections
-    case "${conn_name}" in
-      lo|docker0|virbr0|ovs-system)
-        echo "Preserving system connection: ${conn_name}"
-        continue
-        ;;
-      *)
-        # Check if this is an uplink connection
-        if [[ -n "${uplink_connection}" && "${conn_name}" == "${uplink_connection}" ]]; then
-          echo "Preserving uplink connection: ${conn_name}"
+    while IFS=':' read -r conn_name uuid conn_type; do
+      [[ -z "${conn_name}" ]] && continue
+
+      # Preserve essential system connections and uplink
+      case "${conn_name}" in
+        lo|docker0|virbr0|ovs-system)
+          echo "Preserving system connection: ${conn_name}"
           continue
-        fi
-        ;;
-    esac
+          ;;
+        *)
+          # Check if this is an uplink connection
+          if [[ -n "${uplink_connection}" && "${conn_name}" == "${uplink_connection}" ]]; then
+            echo "Preserving uplink connection: ${conn_name}"
+            continue
+          fi
+          ;;
+      esac
 
-    # Delete everything else (including old OVS bridges, ports, interfaces)
-    connections_to_delete+=("${conn_name}")
-  done <<< "${all_conns}"
+      # Delete everything else
+      connections_to_delete+=("${conn_name}")
+    done <<< "${all_conns}"
 
-  # Delete the connections we identified
-  for conn in "${connections_to_delete[@]}"; do
-    echo "Deleting connection: ${conn}"
-    nmcli connection delete "${conn}" >/dev/null 2>&1 || true
-  done
+    # Delete the connections we identified
+    for conn in "${connections_to_delete[@]}"; do
+      echo "Deleting NetworkManager connection: ${conn}"
+      nmcli connection delete "${conn}" >/dev/null 2>&1 || true
+    done
 
-  echo "Cleanup complete. Preserved: uplink (${uplink:-none}), lo, and system connections"
+    # Clean up system-connections directory
+    if [[ -d "/etc/NetworkManager/system-connections" ]]; then
+      echo "Cleaning up NetworkManager system-connections directory..."
+      for conn_file in /etc/NetworkManager/system-connections/*; do
+        [[ -f "${conn_file}" ]] || continue
+        conn_name=$(basename "${conn_file}")
 
-  # Also clean up OVS bridges if ovs-vsctl is available
+        # Skip essential connections
+        case "${conn_name}" in
+          lo*|docker0*|virbr0*|ovs-system*)
+            continue
+            ;;
+          *)
+            # Skip uplink connection
+            if [[ -n "${uplink_connection}" && "${conn_name}" == "${uplink_connection}" ]]; then
+              continue
+            fi
+            ;;
+        esac
+
+        echo "Removing connection file: ${conn_name}"
+        rm -f "${conn_file}" 2>/dev/null || true
+      done
+    fi
+
+    # Restart NetworkManager
+    systemctl start NetworkManager 2>/dev/null || true
+  fi
+
+  # 3. OVS cleanup
   if command -v ovs-vsctl >/dev/null 2>&1; then
-    echo "Checking for existing OVS bridges to clean up..."
+    echo "Cleaning up Open vSwitch configurations..."
+
+    # Stop OVS service
+    systemctl stop openvswitch-switch 2>/dev/null || true
 
     # Get list of OVS bridges
     local ovs_bridges
     ovs_bridges=$(ovs-vsctl list-br 2>/dev/null || true)
 
     for bridge in ${ovs_bridges}; do
-      # Skip if it's one of our target bridges or doesn't exist
+      # Skip if it's one of our target bridges
       if [[ "${bridge}" == "${BRIDGE}" ]] || [[ "${bridge}" == "ovsbr1" ]]; then
         echo "Preserving OVS bridge: ${bridge}"
         continue
       fi
 
       echo "Removing OVS bridge: ${bridge}"
+      # Remove all ports first, then the bridge
+      for port in $(ovs-vsctl list-ports "${bridge}" 2>/dev/null || true); do
+        ovs-vsctl del-port "${bridge}" "${port}" 2>/dev/null || true
+      done
       ovs-vsctl del-br "${bridge}" 2>/dev/null || true
     done
+
+    # Clean up OVS database
+    ovs-vsctl emer-reset 2>/dev/null || true
+
+    # Start OVS service again
+    systemctl start openvswitch-switch 2>/dev/null || true
   fi
+
+  # 4. Clean up /etc/network/interfaces
+  if [[ -f "/etc/network/interfaces" ]]; then
+    echo "Cleaning up /etc/network/interfaces..."
+
+    # Create backup
+    cp /etc/network/interfaces /etc/network/interfaces.backup.$(date +%s) 2>/dev/null || true
+
+    # Remove all bridge and OVS-related configurations except loopback
+    awk '
+    BEGIN { in_lo = 0; skip_section = 0 }
+    /^auto lo/ || /^iface lo/ || /^allow-hotplug lo/ {
+      in_lo = 1
+      print
+      next
+    }
+    /^$/ && in_lo {
+      print
+      in_lo = 0
+      next
+    }
+    in_lo {
+      print
+      next
+    }
+    /^# LOOPBACK CONFIGURATION/ {
+      print
+      next
+    }
+    /^auto.*lo/ || /^iface.*lo/ || /^allow.*lo/ {
+      print
+      next
+    }
+    /^$/ {
+      next
+    }
+    { skip_section = 1 }
+    END {
+      if (!in_lo && !skip_section) {
+        print "\n# Loopback interface (preserved)"
+        print "auto lo"
+        print "iface lo inet loopback"
+      }
+    }
+    ' /etc/network/interfaces > /etc/network/interfaces.tmp 2>/dev/null || true
+
+    if [[ -s "/etc/network/interfaces.tmp" ]]; then
+      mv /etc/network/interfaces.tmp /etc/network/interfaces 2>/dev/null || true
+    else
+      # Create minimal interfaces file if cleanup went too far
+      cat > /etc/network/interfaces << 'EOF'
+# Loopback interface
+auto lo
+iface lo inet loopback
+
+# Localhost IPv4 and IPv6
+127.0.0.1       localhost
+127.0.1.1       $(hostname)
+
+# IPv6 localhost
+::1             localhost ip6-localhost ip6-loopback
+ff02::1         ip6-allnodes
+ff02::2         ip6-allrouters
+EOF
+    fi
+
+    # Set proper permissions
+    chmod 644 /etc/network/interfaces 2>/dev/null || true
+  fi
+
+  # 5. D-Bus cleanup
+  echo "Cleaning up D-Bus services..."
+  systemctl reload dbus.service 2>/dev/null || systemctl restart dbus.service 2>/dev/null || true
+
+  # Kill any lingering network-related processes
+  pkill -f "dhclient\|NetworkManager\|wpa_supplicant" 2>/dev/null || true
+
+  echo "Comprehensive network cleanup complete!"
+  echo "Preserved: uplink (${uplink:-none}) and essential system interfaces"
 }
 
 ensure_nm_bridge() {
@@ -277,7 +422,7 @@ systemctl daemon-reload
 systemctl reload dbus.service 2>/dev/null || systemctl restart dbus.service
 
 # Clean up existing devices before creating new bridge setup
-cleanup_devices "${UPLINK}"
+cleanup_all_networking "${UPLINK}"
 
 ensure_nm_bridge "${BRIDGE}" "${UPLINK}"
 if (( CREATE_OVSBR1 )); then
