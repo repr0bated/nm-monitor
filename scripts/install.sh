@@ -21,10 +21,10 @@ Options:
 Note: Before installation, comprehensive cleanup will be performed including:
 - NetworkManager connections (except uplink and system interfaces)
 - systemd-networkd configurations
-- Open vSwitch bridges and ports
+- Open vSwitch bridges and ports (including target bridges ovsbr0/ovsbr1)
 - /etc/network/interfaces cleanup
 - D-Bus service refresh
-This ensures a clean slate for the OVS bridge setup.
+This ensures a completely clean slate - all bridges will be recreated from scratch.
 USAGE
 }
 
@@ -163,12 +163,7 @@ cleanup_all_networking() {
     ovs_bridges=$(ovs-vsctl list-br 2>/dev/null || true)
 
     for bridge in ${ovs_bridges}; do
-      # Skip if it's one of our target bridges
-      if [[ "${bridge}" == "${BRIDGE}" ]] || [[ "${bridge}" == "ovsbr1" ]]; then
-        echo "Preserving OVS bridge: ${bridge}"
-        continue
-      fi
-
+      # Clean up all bridges since installation script will recreate them
       echo "Removing OVS bridge: ${bridge}"
       # Remove all ports first, then the bridge
       for port in $(ovs-vsctl list-ports "${bridge}" 2>/dev/null || true); do
@@ -262,6 +257,7 @@ EOF
 
   echo "Comprehensive network cleanup complete!"
   echo "Preserved: uplink (${uplink:-none}) and essential system interfaces"
+  echo "Cleaned: All OVS bridges (including ovsbr0/ovsbr1) - will be recreated by installation"
 }
 
 ensure_nm_bridge() {
@@ -282,9 +278,9 @@ ensure_nm_bridge() {
   local port_conn="ovs-port-${bridge_name}"
   local iface_conn="ovs-if-${bridge_name}"
 
-  nmcli connection delete "${bridge_conn}" >/dev/null 2>&1 || true
-  nmcli connection delete "${port_conn}" >/dev/null 2>&1 || true
-  nmcli connection delete "${iface_conn}" >/dev/null 2>&1 || true
+  # These connections will be cleaned up by the comprehensive cleanup function
+  # so we don't need to delete them here - the ensure_nm_bridge function
+  # in the Rust code will handle creating them fresh
 
   echo "Provisioning NetworkManager bridge profiles for ${bridge_name}"
   nmcli connection add type ovs-bridge \
