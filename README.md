@@ -5,12 +5,13 @@ Rust agent that keeps container veth/tap interfaces attached as OVS ports on a b
 Works on Proxmox VE and generic Debian/Ubuntu with Open vSwitch.
 
 ## Features
-- Attach/detach container ports to `ovsbr0` (configurable) via `ovs-vsctl`
-- Optional renaming to a template like `veth-{container}-eth{index}` (≤ 15 chars)
+- Proactively create container interfaces with `vi{VMID}` naming at container creation time
+- Automatic NetworkManager connection creation for proper vi{VMID} interface names
 - Updates a bounded block in `/etc/network/interfaces` with OVSPort stanzas
-- D‑Bus service `dev.ovs.PortAgent1` (list/add/del ports, ping)
+- D‑Bus service `dev.ovs.PortAgent1` (create/remove container interfaces, ping)
 - Journald logging, CLI helpers
 - Append‑only ledger of actions at `/var/lib/ovs-port-agent/ledger.jsonl`
+- FUSE filesystem integration for Proxmox GUI visibility
 
 ## Quickstart
 ```bash
@@ -76,17 +77,23 @@ gdbus call --system --dest dev.ovs.PortAgent1 --object-path /dev/ovs/PortAgent1 
 # List ports on the managed bridge
 gdbus call --system --dest dev.ovs.PortAgent1 --object-path /dev/ovs/PortAgent1 --method dev.ovs.PortAgent1.list_ports
 
-# Add/delete a port
-gdbus call --system --dest dev.ovs.PortAgent1 --object-path /dev/ovs/PortAgent1 --method dev.ovs.PortAgent1.add_port 'container_eth0'
-gdbus call --system --dest dev.ovs.PortAgent1 --object-path /dev/ovs/PortAgent1 --method dev.ovs.PortAgent1.del_port 'container_eth0'
+# Create/remove container interfaces
+gdbus call --system --dest dev.ovs.PortAgent1 --object-path /dev/ovs/PortAgent1 --method dev.ovs.PortAgent1.create_container_interface 'veth-123-eth0' 'container-123' 100
+gdbus call --system --dest dev.ovs.PortAgent1 --object-path /dev/ovs/PortAgent1 --method dev.ovs.PortAgent1.remove_container_interface 'vi100'
 ```
 
 ## CLI helpers
 ```bash
-# Show sanitized name example
+# Show vi{VMID} naming example
 ./target/release/ovs-port-agent name my-container 0
 
-# List OVS ports via CLI
+# Create container interface with proper vi{VMID} naming
+./target/release/ovs-port-agent create-interface veth-123-eth0 container-123 100
+
+# Remove container interface
+./target/release/ovs-port-agent remove-interface vi100
+
+# List container interfaces via CLI
 ./target/release/ovs-port-agent list
 
 # Print NetworkManager root introspection (debug helper)
@@ -96,13 +103,13 @@ sudo ./target/release/ovs-port-agent introspect
 ## Proxmox notes
 - `ovsbr0` can replace `vmbr0` as the host bridge. Move host IP to `ovsbr0` and enslave the NIC.
 - Proxmox GUI will display ports listed in the bounded block of `/etc/network/interfaces`.
-- If you enable renaming, prefer names like `veth-<container>-ethN`; keep to ≤15 chars.
+- Container interfaces are automatically named using the `vi{VMID}` format (e.g., `vi100`, `vi101`).
 
 ## Roadmap
-- Switch from periodic scan to rtnetlink subscription with debounce
-- Container name/idx resolution for template
+- Container lifecycle integration (create/remove interfaces via container runtime hooks)
+- Enhanced Proxmox integration with VMID resolution
 - Optional base OpenFlow programming (NORMAL + punt mesh CIDRs to LOCAL)
-- More D‑Bus methods (flow control, config reload)
+- More D‑Bus methods (flow control, config reload, batch operations)
 
 ## Development
 ```bash

@@ -13,9 +13,7 @@ mod rpc;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use log::{error, info, warn};
-use std::path::PathBuf;
-use tokio::signal;
+use log::{info, warn};
 
 #[derive(Parser)]
 #[command(name = "ovs-port-agent", version, about = "OVS container port agent", long_about=None)]
@@ -34,6 +32,20 @@ enum Commands {
     Run,
     /// Show naming example for a container and index
     Name { container: String, index: u16 },
+    /// Create a container interface with proper vi{VMID} naming
+    CreateInterface {
+        /// Raw interface name (e.g., veth-123-eth0)
+        raw_ifname: String,
+        /// Container identifier
+        container_id: String,
+        /// VM ID number
+        vmid: u32,
+    },
+    /// Remove a container interface
+    RemoveInterface {
+        /// Interface name to remove (e.g., vi100)
+        interface_name: String,
+    },
     /// List OVS ports on the configured bridge
     List,
     /// D-Bus introspection: print NM root interfaces
@@ -54,6 +66,44 @@ async fn main() -> Result<()> {
             println!("{}", name);
             Ok(())
         }
+        Commands::CreateInterface { raw_ifname, container_id, vmid } => {
+            let bridge = cfg.bridge_name;
+            let interfaces_path = cfg.interfaces_path;
+            let managed_tag = cfg.managed_block_tag;
+            let enable_rename = cfg.enable_rename;
+            let naming_template = cfg.naming_template;
+            let ledger_path = cfg.ledger_path;
+
+            netlink::create_container_interface(
+                bridge,
+                &raw_ifname,
+                &container_id,
+                vmid,
+                interfaces_path,
+                managed_tag,
+                enable_rename,
+                naming_template,
+                ledger_path,
+            ).await?;
+            println!("Container interface created successfully for VMID {}", vmid);
+            Ok(())
+        }
+        Commands::RemoveInterface { interface_name } => {
+            let bridge = cfg.bridge_name;
+            let interfaces_path = cfg.interfaces_path;
+            let managed_tag = cfg.managed_block_tag;
+            let ledger_path = cfg.ledger_path;
+
+            netlink::remove_container_interface(
+                bridge,
+                &interface_name,
+                interfaces_path,
+                managed_tag,
+                ledger_path,
+            ).await?;
+            println!("Container interface {} removed successfully", interface_name);
+            Ok(())
+        }
         Commands::List => {
             let names = nmcli_dyn::list_connection_names()?;
             for p in names.into_iter().filter(|n| n.starts_with("dyn-eth-")) {
@@ -65,56 +115,3 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn run_agent(cfg: config::Config) -> Result<()> {
-    info!("starting ovs-port-agent on bridge {}", cfg.bridge_name);
-
-    // Ensure the bridge and optional uplink exist under NetworkManager control
-    nm_bridge::ensure_bridge_topology(&cfg.bridge_name, cfg.uplink.as_deref(), 45)?;
-
-    // Write NetworkManager unmanaged-devices config
-    if !cfg.nm_unmanaged.is_empty() {
-        if let Err(e) = nm_config::write_unmanaged_devices(&cfg.nm_unmanaged) {
-            warn!("failed to write NM unmanaged-devices config: {:?}", e);
-        }
-    }
-
-    // Start D-Bus service (best-effort)
-    let state = rpc::AppState {
-        bridge: cfg.bridge_name.clone(),
-        ledger_path: cfg.ledger_path.clone(),
-    };
-    let _rpc_handle = tokio::spawn(rpc::serve_with_state(state));
-
-    // Start link monitor (best-effort). For now, periodic reconcile.
-    let bridge = cfg.bridge_name.clone();
-    let include_prefixes = cfg.include_prefixes.clone();
-    let interfaces_path = cfg.interfaces_path.clone();
-    let managed_tag = cfg.managed_block_tag.clone();
-    let enable_rename = cfg.enable_rename;
-    let naming_template = cfg.naming_template.clone();
-    let ledger_path = cfg.ledger_path.clone();
-    let uplink = cfg.uplink.clone();
-
-    let monitor_handle = tokio::spawn(async move {
-        if let Err(err) = netlink::monitor_links(
-            bridge,
-            include_prefixes,
-            interfaces_path,
-            managed_tag,
-            enable_rename,
-            naming_template,
-            ledger_path,
-            uplink,
-        )
-        .await
-        {
-            error!("link monitor exited with error: {err:?}");
-        }
-    });
-
-    signal::ctrl_c().await?;
-    info!("shutdown requested, exiting");
-    monitor_handle.abort();
-    let _ = monitor_handle.await;
-    Ok(())
-}
