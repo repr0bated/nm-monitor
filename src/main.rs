@@ -14,6 +14,7 @@ mod rpc;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use log::{info, warn};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "ovs-port-agent", version, about = "OVS container port agent", long_about=None)]
@@ -60,7 +61,41 @@ async fn main() -> Result<()> {
     let cfg = config::Config::load(args.config.as_deref())?;
 
     match args.command.unwrap_or(Commands::Run) {
-        Commands::Run => run_agent(cfg).await,
+        Commands::Run => {
+            // Ensure the bridge and optional uplink exist under NetworkManager control
+            nm_bridge::ensure_bridge_topology(&cfg.bridge_name, cfg.uplink.as_deref(), 45)?;
+
+            // Write NetworkManager unmanaged-devices config
+            if !cfg.nm_unmanaged.is_empty() {
+                if let Err(e) = nm_config::write_unmanaged_devices(&cfg.nm_unmanaged) {
+                    warn!("failed to write NM unmanaged-devices config: {:?}", e);
+                }
+            }
+
+            // Initialize FUSE mount base for Proxmox visibility
+            if let Err(err) = fuse::ensure_fuse_mount_base() {
+                warn!("failed to ensure FUSE mount base: {err:?}");
+            }
+
+            // Clean up any existing mounts (safety cleanup)
+            if let Err(err) = fuse::cleanup_all_mounts() {
+                warn!("failed to cleanup existing FUSE mounts: {err:?}");
+            }
+
+            // Set up RPC state for container interface creation/removal
+            let rpc_state = rpc::AppState {
+                bridge: cfg.bridge_name.clone(),
+                ledger_path: cfg.ledger_path.clone(),
+            };
+
+            info!("OVS Port Agent initialized successfully");
+            info!("Container interface creation available via D-Bus API");
+            info!("Bridge: {} (uplink: {})", cfg.bridge_name, cfg.uplink.as_deref().unwrap_or("none"));
+
+            // Run the RPC service - container interfaces will be created via D-Bus API calls
+            rpc::serve_with_state(rpc_state).await?;
+            Ok(())
+        }
         Commands::Name { container, index } => {
             let name = naming::container_eth_name(&container, index);
             println!("{}", name);

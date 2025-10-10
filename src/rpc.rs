@@ -4,7 +4,6 @@ use std::future;
 use zbus::ConnectionBuilder;
 
 use crate::ledger::Ledger;
-use crate::netlink;
 use crate::nmcli_dyn;
 use std::path::PathBuf;
 
@@ -76,7 +75,7 @@ impl PortAgent {
         let enable_rename = true;
         let naming_template = "vi{container}".to_string();
 
-        tokio::runtime::Handle::current()
+        match tokio::runtime::Handle::current()
             .block_on(async {
                 crate::netlink::create_container_interface(
                     self.state.bridge.clone(),
@@ -88,9 +87,11 @@ impl PortAgent {
                     enable_rename,
                     naming_template,
                     self.state.ledger_path.clone(),
-                )
-            })
-            .map_err(|e| zbus::fdo::Error::Failed(format!("Failed to create container interface: {}", e)))?;
+                ).await
+            }) {
+                Ok(_) => {},
+                Err(e) => return Err(zbus::fdo::Error::Failed(format!("Failed to create container interface: {}", e))),
+            }
 
         Ok(format!("Container interface created for VMID {}", vmid))
     }
@@ -101,7 +102,7 @@ impl PortAgent {
         let interfaces_path = "/etc/network/interfaces".to_string();
         let managed_tag = "ovs-port-agent".to_string();
 
-        tokio::runtime::Handle::current()
+        match tokio::runtime::Handle::current()
             .block_on(async {
                 crate::netlink::remove_container_interface(
                     self.state.bridge.clone(),
@@ -109,9 +110,11 @@ impl PortAgent {
                     interfaces_path,
                     managed_tag,
                     self.state.ledger_path.clone(),
-                )
-            })
-            .map_err(|e| zbus::fdo::Error::Failed(format!("Failed to remove container interface: {}", e)))?;
+                ).await
+            }) {
+                Ok(_) => {},
+                Err(e) => return Err(zbus::fdo::Error::Failed(format!("Failed to remove container interface: {}", e))),
+            }
 
         Ok(format!("Container interface {} removed", interface_name))
     }

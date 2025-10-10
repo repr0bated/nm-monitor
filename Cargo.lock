@@ -1113,6 +1113,7 @@ dependencies = [
  "chrono",
  "clap",
  "env_logger",
+ "futures",
  "futures-util",
  "hex",
  "log",

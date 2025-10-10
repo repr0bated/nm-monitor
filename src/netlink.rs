@@ -1,5 +1,5 @@
 use crate::fuse::{
-    bind_veth_interface, cleanup_all_mounts, ensure_fuse_mount_base, unbind_veth_interface,
+    bind_veth_interface, ensure_fuse_mount_base, unbind_veth_interface,
 };
 use crate::interfaces::update_interfaces_block;
 use crate::ledger::Ledger;
@@ -8,7 +8,7 @@ use crate::naming::render_template;
 use crate::nmcli_dyn;
 use anyhow::{Context, Result};
 use log::{info, warn};
-use std::{collections::BTreeSet, path::PathBuf};
+use std::path::PathBuf;
 /// Proactively create a container interface with proper vi{VMID} naming
 /// This replaces the monitoring approach with immediate creation
 pub async fn create_container_interface(
@@ -84,9 +84,9 @@ pub async fn create_container_interface(
     }
 
     // Update /etc/network/interfaces for Proxmox GUI visibility
-    let mut names = vec![target_name.clone()];
+    let names = vec![target_name.clone()];
     update_interfaces_block(
-        interfaces_path,
+        &interfaces_path,
         &managed_tag,
         &names,
         &bridge,
@@ -129,9 +129,9 @@ pub async fn remove_container_interface(
     );
 
     // Update /etc/network/interfaces
-    let mut names: Vec<String> = Vec::new();
+    let names: Vec<String> = Vec::new();
     update_interfaces_block(
-        interfaces_path,
+        &interfaces_path,
         &managed_tag,
         &names,
         &bridge,
