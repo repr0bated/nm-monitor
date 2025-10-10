@@ -49,7 +49,7 @@ enum Commands {
     },
     /// List OVS ports on the configured bridge
     List,
-    /// D-Bus introspection: print NM root interfaces
+    /// Comprehensive NetworkManager introspection and debugging
     Introspect,
 }
 

@@ -80,6 +80,9 @@ gdbus call --system --dest dev.ovs.PortAgent1 --object-path /dev/ovs/PortAgent1 
 # Create/remove container interfaces
 gdbus call --system --dest dev.ovs.PortAgent1 --object-path /dev/ovs/PortAgent1 --method dev.ovs.PortAgent1.create_container_interface 'veth-123-eth0' 'container-123' 100
 gdbus call --system --dest dev.ovs.PortAgent1 --object-path /dev/ovs/PortAgent1 --method dev.ovs.PortAgent1.remove_container_interface 'vi100'
+
+# Comprehensive NetworkManager introspection and debugging
+gdbus call --system --dest dev.ovs.PortAgent1 --object-path /dev/ovs/PortAgent1 --method dev.ovs.PortAgent1.introspect_network_manager
 ```
 
 ## CLI helpers
@@ -96,7 +99,7 @@ gdbus call --system --dest dev.ovs.PortAgent1 --object-path /dev/ovs/PortAgent1 
 # List container interfaces via CLI
 ./target/release/ovs-port-agent list
 
-# Print NetworkManager root introspection (debug helper)
+# Comprehensive NetworkManager introspection and debugging
 sudo ./target/release/ovs-port-agent introspect
 ```
 
