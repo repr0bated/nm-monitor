@@ -17,6 +17,9 @@ Options:
   --ovsbr1-uplink IFACE  Physical interface to attach as ovsbr1 uplink (optional)
   --system          Enable and start the systemd service after installing
   --help            Show this help message
+
+Note: Before installation, all NetworkManager connections except uplink and lo
+will be removed to ensure a clean slate for the OVS bridge setup.
 USAGE
 }
 
@@ -26,6 +29,95 @@ SYSTEM=0
 UPLINK=""
 CREATE_OVSBR1=0
 OVSBR1_UPLINK=""
+
+cleanup_devices() {
+  local uplink="$1"
+
+  if ! command -v nmcli >/dev/null 2>&1; then
+    echo "nmcli not found; skipping NetworkManager cleanup"
+    return
+  fi
+
+  if ! systemctl is-active --quiet NetworkManager; then
+    echo "NetworkManager is not active; skipping cleanup"
+    return
+  fi
+
+  echo "Cleaning up existing NetworkManager connections..."
+
+  # Get list of all connections except system ones
+  local all_conns
+  all_conns=$(nmcli -t -f NAME,UUID,TYPE connection show || true)
+
+  local connections_to_delete=()
+  local uplink_connection=""
+
+  # Find uplink connection if specified
+  if [[ -n "${uplink}" ]]; then
+    # Look for active connection on the uplink interface
+    uplink_connection=$(nmcli -t -f NAME,DEVICE connection show --active | grep ":${uplink}$" | cut -d: -f1 || true)
+
+    # If not found in active connections, look in all connections
+    if [[ -z "${uplink_connection}" ]]; then
+      uplink_connection=$(nmcli -t -f NAME,DEVICE connection show | grep ":${uplink}$" | cut -d: -f1 || true)
+    fi
+
+    if [[ -n "${uplink_connection}" ]]; then
+      echo "Preserving uplink connection: ${uplink_connection} (interface: ${uplink})"
+    else
+      echo "Warning: Uplink interface ${uplink} not found in NetworkManager connections"
+    fi
+  fi
+
+  # Parse connections and decide what to delete
+  while IFS=':' read -r conn_name uuid conn_type; do
+    # Preserve essential system connections
+    case "${conn_name}" in
+      lo|docker0|virbr0|ovs-system)
+        echo "Preserving system connection: ${conn_name}"
+        continue
+        ;;
+      *)
+        # Check if this is an uplink connection
+        if [[ -n "${uplink_connection}" && "${conn_name}" == "${uplink_connection}" ]]; then
+          echo "Preserving uplink connection: ${conn_name}"
+          continue
+        fi
+        ;;
+    esac
+
+    # Delete everything else (including old OVS bridges, ports, interfaces)
+    connections_to_delete+=("${conn_name}")
+  done <<< "${all_conns}"
+
+  # Delete the connections we identified
+  for conn in "${connections_to_delete[@]}"; do
+    echo "Deleting connection: ${conn}"
+    nmcli connection delete "${conn}" >/dev/null 2>&1 || true
+  done
+
+  echo "Cleanup complete. Preserved: uplink (${uplink:-none}), lo, and system connections"
+
+  # Also clean up OVS bridges if ovs-vsctl is available
+  if command -v ovs-vsctl >/dev/null 2>&1; then
+    echo "Checking for existing OVS bridges to clean up..."
+
+    # Get list of OVS bridges
+    local ovs_bridges
+    ovs_bridges=$(ovs-vsctl list-br 2>/dev/null || true)
+
+    for bridge in ${ovs_bridges}; do
+      # Skip if it's one of our target bridges or doesn't exist
+      if [[ "${bridge}" == "${BRIDGE}" ]] || [[ "${bridge}" == "ovsbr1" ]]; then
+        echo "Preserving OVS bridge: ${bridge}"
+        continue
+      fi
+
+      echo "Removing OVS bridge: ${bridge}"
+      ovs-vsctl del-br "${bridge}" 2>/dev/null || true
+    done
+  fi
+}
 
 ensure_nm_bridge() {
   local bridge_name="$1"
@@ -183,6 +275,9 @@ install -m 0644 systemd/ovs-port-agent.service "${SYSTEMD_UNIT}"
 
 systemctl daemon-reload
 systemctl reload dbus.service 2>/dev/null || systemctl restart dbus.service
+
+# Clean up existing devices before creating new bridge setup
+cleanup_devices "${UPLINK}"
 
 ensure_nm_bridge "${BRIDGE}" "${UPLINK}"
 if (( CREATE_OVSBR1 )); then
