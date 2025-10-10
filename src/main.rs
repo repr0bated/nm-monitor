@@ -1,4 +1,5 @@
 mod config;
+mod fuse;
 mod interfaces;
 mod ledger;
 mod link;

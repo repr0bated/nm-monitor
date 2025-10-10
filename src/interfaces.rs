@@ -35,6 +35,7 @@ pub fn update_interfaces_block(
     if !all_ports.is_empty() {
         block.push_str(&format!("    ovs_ports {}\n", all_ports.join(" ")));
     }
+    #[allow(clippy::single_char_add_str)]
     block.push_str("\n");
 
     // Internal interface for the bridge

@@ -35,7 +35,10 @@ pub fn ensure_dynamic_port(bridge: &str, ifname: &str) -> Result<()> {
     let port_active = is_connection_active(&port_name)?;
 
     if port_active {
-        debug!("OVS port {} already exists and is active, skipping", port_name);
+        debug!(
+            "OVS port {} already exists and is active, skipping",
+            port_name
+        );
         return Ok(());
     }
 

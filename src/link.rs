@@ -16,10 +16,7 @@ pub fn container_short_name_from_ifname(ifname: &str) -> Option<String> {
         }
     }
     // Extract only the numeric VMID, stopping at 'i' separator or non-digit
-    let vmid: String = s
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect();
+    let vmid: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
     if vmid.is_empty() {
         None
     } else {

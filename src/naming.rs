@@ -53,10 +53,10 @@ pub fn render_template(template: &str, container: &str, index: u16) -> String {
 }
 
 fn sanitize15(s: &str) -> String {
-    let mut out: String = s
+    let out: String = s
         .chars()
         .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+            if c.is_ascii_alphanumeric() || c == '_' {
                 c.to_ascii_lowercase()
             } else {
                 '_'

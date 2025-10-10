@@ -1,3 +1,6 @@
+use crate::fuse::{
+    bind_veth_interface, cleanup_all_mounts, ensure_fuse_mount_base, unbind_veth_interface,
+};
 use crate::interfaces::update_interfaces_block;
 use crate::ledger::Ledger;
 use crate::link;
@@ -11,6 +14,7 @@ use tokio::time::{sleep, Duration, Instant};
 use futures_util::TryStreamExt;
 use rtnetlink::new_connection;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn monitor_links(
     bridge: String,
     include_prefixes: Vec<String>,
@@ -31,6 +35,16 @@ pub async fn monitor_links(
     // Debounce window
     let debounce = Duration::from_millis(500);
     let mut last_fire = Instant::now() - debounce;
+
+    // Ensure FUSE mount base exists
+    if let Err(err) = ensure_fuse_mount_base() {
+        warn!("failed to ensure FUSE mount base: {err:?}");
+    }
+
+    // Clean up any existing mounts (safety cleanup)
+    if let Err(err) = cleanup_all_mounts() {
+        warn!("failed to cleanup existing FUSE mounts: {err:?}");
+    }
 
     // Initial reconcile
     if let Err(err) = reconcile_once(
@@ -74,6 +88,7 @@ pub async fn monitor_links(
     }
 }
 
+#[allow(clippy::too_many_arguments, clippy::ptr_arg, clippy::collapsible_if, clippy::needless_borrow)]
 fn reconcile_once(
     bridge: &str,
     include_prefixes: &[String],
@@ -137,8 +152,18 @@ fn reconcile_once(
             "nm_add_dyn_port",
             serde_json::json!({"port": name, "bridge": bridge}),
         );
+
+        // Create FUSE bind mount for Proxmox visibility
+        if let Err(e) = bind_veth_interface(name, name) {
+            warn!("Failed to bind veth interface {}: {}", name, e);
+        }
     }
     for name in to_del.iter() {
+        // Unbind FUSE mount before removing the port
+        if let Err(e) = unbind_veth_interface(name) {
+            warn!("Failed to unbind veth interface {}: {}", name, e);
+        }
+
         nmcli_dyn::remove_dynamic_port(name)
             .with_context(|| format!("nmcli remove dyn port for {name}"))?;
         let mut lg = Ledger::open(PathBuf::from(ledger_path))?;

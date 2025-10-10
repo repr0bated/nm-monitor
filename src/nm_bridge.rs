@@ -30,6 +30,7 @@ impl Default for OvsBridgeConfig {
 
 /// Ensure the full bridge topology (bridge + internal port + optional uplink) exists
 pub fn ensure_bridge_topology(bridge: &str, uplink: Option<&str>, wait_seconds: u32) -> Result<()> {
+    #[allow(clippy::field_reassign_with_default)]
     let mut cfg = OvsBridgeConfig::default();
     cfg.name = bridge.to_string();
 
@@ -49,27 +50,6 @@ pub fn ensure_bridge_topology(bridge: &str, uplink: Option<&str>, wait_seconds: 
     validate_bridge_topology(bridge)?;
 
     Ok(())
-}
-
-/// NetworkManager OVS Port configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OvsPortConfig {
-    pub name: String,
-    pub bridge: String,
-    pub tag: Option<u32>,
-    pub vlan_mode: Option<String>,
-    pub lacp: Option<String>,
-    pub bond_mode: Option<String>,
-    pub bond_updelay: Option<u32>,
-    pub bond_downdelay: Option<u32>,
-}
-
-/// NetworkManager OVS Interface configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OvsInterfaceConfig {
-    pub name: String,
-    pub type_: String,
-    pub ofport_request: Option<u32>,
 }
 
 /// Create OVS bridge with strict NetworkManager compliance
@@ -122,9 +102,9 @@ pub fn create_ovs_bridge(config: &OvsBridgeConfig) -> Result<()> {
         "connection.autoconnect-slaves",
         "1",
         "ipv4.method",
-        "disabled",
+        "auto",
         "ipv6.method",
-        "ignore",
+        "auto",
     ]);
 
     if let Some(ref datapath_type) = config.datapath_type {
@@ -185,9 +165,9 @@ pub fn modify_ovs_bridge(config: &OvsBridgeConfig) -> Result<()> {
         "connection.autoconnect-slaves",
         "1",
         "ipv4.method",
-        "disabled",
+        "auto",
         "ipv6.method",
-        "ignore",
+        "auto",
     ]);
 
     if let Some(ref datapath_type) = config.datapath_type {
@@ -215,9 +195,9 @@ pub fn modify_ovs_bridge(config: &OvsBridgeConfig) -> Result<()> {
 
 /// Create OVS port with internal interface for bridge IP assignment
 pub fn create_ovs_internal_port(bridge: &str) -> Result<()> {
-    let port_conn = format!("{bridge}-port-int");
+    let port_conn = format!("{bridge}_port_int");
     let port_ifname = port_conn.clone();
-    let iface_conn = format!("{bridge}-if");
+    let iface_conn = format!("{bridge}_if");
     let iface_ifname = iface_conn.clone();
 
     info!(
@@ -282,9 +262,9 @@ pub fn create_ovs_internal_port(bridge: &str) -> Result<()> {
         "connection.autoconnect-priority",
         "95",
         "ipv4.method",
-        "disabled",
+        "auto",
         "ipv6.method",
-        "disabled",
+        "auto",
     ];
 
     let output = Command::new("nmcli")
@@ -305,7 +285,7 @@ pub fn create_ovs_internal_port(bridge: &str) -> Result<()> {
 
 /// Create OVS port for external interface (uplink)
 pub fn create_ovs_uplink_port(bridge: &str, ifname: &str) -> Result<()> {
-    let port_conn = format!("{}-port-{}", bridge, ifname);
+    let port_conn = format!("{}_port_{}", bridge, ifname);
     let port_ifname = port_conn.clone();
 
     info!(
@@ -348,7 +328,7 @@ pub fn create_ovs_uplink_port(bridge: &str, ifname: &str) -> Result<()> {
     }
 
     // Create or modify ethernet connection as slave
-    let eth_name = format!("{}-uplink-{}", bridge, ifname);
+    let eth_name = format!("{}_uplink_{}", bridge, ifname);
     if connection_exists(&eth_name)? {
         delete_connection(&eth_name)?;
     }
@@ -390,7 +370,7 @@ pub fn create_ovs_uplink_port(bridge: &str, ifname: &str) -> Result<()> {
 fn modify_ethernet_to_slave(port_name: &str, ifname: &str, desired_id: &str) -> Result<()> {
     // Find active ethernet connection on this interface
     let output = Command::new("nmcli")
-        .args(&[
+        .args([
             "-t",
             "-f",
             "NAME,DEVICE,TYPE",
@@ -493,7 +473,7 @@ pub fn activate_bridge(bridge: &str, wait_seconds: u32) -> Result<()> {
 /// Check if NetworkManager connection exists
 pub fn connection_exists(name: &str) -> Result<bool> {
     let output = Command::new("nmcli")
-        .args(&["-t", "-f", "NAME", "connection", "show"])
+        .args(["-t", "-f", "NAME", "connection", "show"])
         .output()
         .context("Failed to list connections")?;
 
@@ -522,63 +502,13 @@ fn delete_connection(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Configure IP address on OVS interface
-pub fn configure_ip_address(if_name: &str, ip_addr: &str, gateway: Option<&str>) -> Result<()> {
-    info!("Configuring IP {} on interface {}", ip_addr, if_name);
-
-    let mut args = vec![
-        "connection",
-        "modify",
-        if_name,
-        "ipv4.method",
-        "manual",
-        "ipv4.addresses",
-        ip_addr,
-        "ipv6.method",
-        "disabled",
-    ];
-
-    if let Some(gw) = gateway {
-        args.extend_from_slice(&["ipv4.gateway", gw]);
-    }
-
-    let output = Command::new("nmcli")
-        .args(&args)
-        .output()
-        .context("Failed to configure IP address")?;
-
-    if !output.status.success() {
-        bail!(
-            "Failed to configure IP: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    Ok(())
-}
-
-/// Get D-Bus introspection data for NetworkManager
-pub async fn get_nm_introspection() -> Result<String> {
-    use zbus::fdo::IntrospectableProxy;
-
-    let conn = zbus::Connection::system().await?;
-    let proxy = IntrospectableProxy::builder(&conn)
-        .destination("org.freedesktop.NetworkManager")?
-        .path("/org/freedesktop/NetworkManager")?
-        .build()
-        .await?;
-
-    let xml = proxy.introspect().await?;
-    Ok(xml)
-}
-
 /// Validate OVS bridge topology
 pub fn validate_bridge_topology(bridge: &str) -> Result<()> {
     info!("Validating OVS bridge {} topology", bridge);
 
     // Ensure required connection profiles exist
-    let int_port = format!("{}-port-int", bridge);
-    let interface = format!("{}-if", bridge);
+    let int_port = format!("{}_port_int", bridge);
+    let interface = format!("{}_if", bridge);
     for name in [bridge, int_port.as_str(), interface.as_str()] {
         if !connection_exists(name)? {
             bail!("Required connection {name} does not exist");
@@ -629,6 +559,7 @@ pub fn validate_bridge_topology(bridge: &str) -> Result<()> {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 
