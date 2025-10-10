@@ -1,7 +1,7 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use log::info;
 use std::future;
-use zbus::ConnectionBuilder;
+use zbus::{fdo::IntrospectableProxy, ConnectionBuilder};
 
 use crate::ledger::Ledger;
 use crate::nmcli_dyn;
@@ -330,61 +330,55 @@ async fn introspect_object(conn: &zbus::Connection, destination: &str, path: &st
 }
 
 // Helper function to get NetworkManager devices
-async fn get_nm_devices(conn: &zbus::Connection) -> Result<Vec<DeviceInfo>> {
-    use zbus::zvariant::Value;
+async fn get_nm_devices(_conn: &zbus::Connection) -> Result<Vec<DeviceInfo>> {
+    // Use nmcli for device information since D-Bus API is complex
+    let output = std::process::Command::new("nmcli")
+        .args(["-t", "-f", "DEVICE,TYPE,STATE", "device", "status"])
+        .output()
+        .context("Failed to get NetworkManager devices")?;
 
-    let proxy = zbus::Proxy::new(
-        conn,
-        "org.freedesktop.NetworkManager",
-        "/org/freedesktop/NetworkManager",
-        "org.freedesktop.NetworkManager",
-    ).await?;
+    if !output.status.success() {
+        return Err(anyhow::anyhow!("nmcli device status command failed"));
+    }
 
-    let devices: Vec<zbus::zvariant::ObjectPath> = proxy.call("GetDevices", &()).await?;
-
+    let devices_text = String::from_utf8_lossy(&output.stdout);
     let mut device_infos = Vec::new();
-    for device_path in devices {
-        if let Ok(device_proxy) = zbus::Proxy::new(
-            conn,
-            "org.freedesktop.NetworkManager",
-            &device_path.to_string(),
-            "org.freedesktop.NetworkManager.Device",
-        ).await {
-            let interface: String = device_proxy.get_property("Interface").await.unwrap_or_default();
-            let device_type: u32 = device_proxy.get_property("DeviceType").await.unwrap_or(0);
-            let state: u32 = device_proxy.get_property("State").await.unwrap_or(0);
 
-            let device_type_str = match device_type {
-                1 => "Ethernet",
-                2 => "Wi-Fi",
-                5 => "Bluetooth",
-                14 => "OVS Interface",
-                15 => "OVS Port",
-                16 => "OVS Bridge",
-                _ => "Unknown",
-            }.to_string();
+    for line in devices_text.lines() {
+        if let Some((device, type_state)) = line.split_once(':') {
+            if let Some((device_type, state)) = type_state.split_once(':') {
+                let device_type_str = match device_type {
+                    "ethernet" => "Ethernet",
+                    "wifi" => "Wi-Fi",
+                    "bluetooth" => "Bluetooth",
+                    "ovs-interface" => "OVS Interface",
+                    "ovs-port" => "OVS Port",
+                    "ovs-bridge" => "OVS Bridge",
+                    _ => "Unknown",
+                }.to_string();
 
-            let state_str = match state {
-                10 => "Unmanaged",
-                20 => "Unavailable",
-                30 => "Disconnected",
-                40 => "Prepare",
-                50 => "Config",
-                60 => "Need Auth",
-                70 => "IP Config",
-                80 => "IP Check",
-                90 => "Secondaries",
-                100 => "Activated",
-                110 => "Deactivating",
-                120 => "Failed",
-                _ => "Unknown",
-            }.to_string();
+                let state_str = match state {
+                    "unmanaged" => "Unmanaged",
+                    "unavailable" => "Unavailable",
+                    "disconnected" => "Disconnected",
+                    "prepare" => "Prepare",
+                    "config" => "Config",
+                    "need-auth" => "Need Auth",
+                    "ip-config" => "IP Config",
+                    "ip-check" => "IP Check",
+                    "secondaries" => "Secondaries",
+                    "activated" => "Activated",
+                    "deactivating" => "Deactivating",
+                    "failed" => "Failed",
+                    _ => "Unknown",
+                }.to_string();
 
-            device_infos.push(DeviceInfo {
-                interface,
-                device_type: device_type_str,
-                state: state_str,
-            });
+                device_infos.push(DeviceInfo {
+                    interface: device.to_string(),
+                    device_type: device_type_str,
+                    state: state_str,
+                });
+            }
         }
     }
 
@@ -392,55 +386,39 @@ async fn get_nm_devices(conn: &zbus::Connection) -> Result<Vec<DeviceInfo>> {
 }
 
 // Helper function to get active connections
-async fn get_nm_active_connections(conn: &zbus::Connection) -> Result<Vec<ConnectionInfo>> {
-    use zbus::zvariant::Value;
+async fn get_nm_active_connections(_conn: &zbus::Connection) -> Result<Vec<ConnectionInfo>> {
+    // Use nmcli for active connections since D-Bus API is complex
+    let output = std::process::Command::new("nmcli")
+        .args(["-t", "-f", "NAME,UUID,TYPE,STATE", "connection", "show", "--active"])
+        .output()
+        .context("Failed to get NetworkManager active connections")?;
 
-    let proxy = zbus::Proxy::new(
-        conn,
-        "org.freedesktop.NetworkManager",
-        "/org/freedesktop/NetworkManager",
-        "org.freedesktop.NetworkManager",
-    ).await?;
+    if !output.status.success() {
+        return Err(anyhow::anyhow!("nmcli active connections command failed"));
+    }
 
-    let active_conns: Vec<zbus::zvariant::ObjectPath> = proxy.call("GetActiveConnections", &()).await?;
-
+    let connections_text = String::from_utf8_lossy(&output.stdout);
     let mut connection_infos = Vec::new();
-    for conn_path in active_conns {
-        if let Ok(conn_proxy) = zbus::Proxy::new(
-            conn,
-            "org.freedesktop.NetworkManager",
-            &conn_path.to_string(),
-            "org.freedesktop.NetworkManager.Connection.Active",
-        ).await {
-            let connection_path: zbus::zvariant::ObjectPath = conn_proxy.get_property("Connection").await.unwrap_or_default();
-            let state: u32 = conn_proxy.get_property("State").await.unwrap_or(0);
 
-            // Get connection details
-            if let Ok(settings_proxy) = zbus::Proxy::new(
-                conn,
-                "org.freedesktop.NetworkManager",
-                &connection_path.to_string(),
-                "org.freedesktop.NetworkManager.Settings.Connection",
-            ).await {
-                let name: String = settings_proxy.get_property("Id").await.unwrap_or_default();
-                let uuid: String = settings_proxy.get_property("Uuid").await.unwrap_or_default();
-                let connection_type: String = settings_proxy.get_property("Type").await.unwrap_or_default();
+    for line in connections_text.lines() {
+        if let Some((name, uuid_type_state)) = line.split_once(':') {
+            if let Some((uuid, type_state)) = uuid_type_state.split_once(':') {
+                if let Some((connection_type, state)) = type_state.split_once(':') {
+                    let state_str = match state {
+                        "activated" => "Activated",
+                        "activating" => "Activating",
+                        "deactivated" => "Deactivated",
+                        "deactivating" => "Deactivating",
+                        _ => "Unknown",
+                    }.to_string();
 
-                let state_str = match state {
-                    0 => "Unknown",
-                    1 => "Activating",
-                    2 => "Activated",
-                    3 => "Deactivating",
-                    4 => "Deactivated",
-                    _ => "Unknown",
-                }.to_string();
-
-                connection_infos.push(ConnectionInfo {
-                    name,
-                    uuid,
-                    connection_type,
-                    state: state_str,
-                });
+                    connection_infos.push(ConnectionInfo {
+                        name: name.to_string(),
+                        uuid: uuid.to_string(),
+                        connection_type: connection_type.to_string(),
+                        state: state_str,
+                    });
+                }
             }
         }
     }
@@ -449,7 +427,7 @@ async fn get_nm_active_connections(conn: &zbus::Connection) -> Result<Vec<Connec
 }
 
 // Helper function to get all connections
-async fn get_nm_all_connections(conn: &zbus::Connection) -> Result<Vec<ConnectionInfo>> {
+async fn get_nm_all_connections(_conn: &zbus::Connection) -> Result<Vec<ConnectionInfo>> {
     let output = std::process::Command::new("nmcli")
         .args(["-t", "-f", "NAME,UUID,TYPE", "connection", "show"])
         .output()
@@ -543,13 +521,13 @@ async fn get_system_network_state() -> Result<SystemNetworkState> {
     let active_connections = std::process::Command::new("nmcli")
         .args(["-t", "connection", "show", "--active"])
         .output()
-        .map(|output| output.stdout.lines().count())
+        .map(|output| String::from_utf8_lossy(&output.stdout).lines().count())
         .unwrap_or(0);
 
     let all_connections = std::process::Command::new("nmcli")
         .args(["-t", "connection", "show"])
         .output()
-        .map(|output| output.stdout.lines().count())
+        .map(|output| String::from_utf8_lossy(&output.stdout).lines().count())
         .unwrap_or(0);
 
     Ok(SystemNetworkState {
@@ -562,7 +540,7 @@ async fn get_system_network_state() -> Result<SystemNetworkState> {
 }
 
 // Helper function to get D-Bus service information
-async fn get_dbus_service_info(conn: &zbus::Connection) -> Result<DBusServiceInfo> {
+async fn get_dbus_service_info(_conn: &zbus::Connection) -> Result<DBusServiceInfo> {
     Ok(DBusServiceInfo {
         service_name: "org.freedesktop.NetworkManager".to_string(),
         object_path: "/org/freedesktop/NetworkManager".to_string(),
