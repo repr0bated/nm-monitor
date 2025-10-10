@@ -141,8 +141,8 @@ async fn main() -> Result<()> {
         }
         Commands::List => {
             let names = nmcli_dyn::list_connection_names()?;
-            for p in names.into_iter().filter(|n| n.starts_with("dyn-eth-")) {
-                println!("{}", p.trim_start_matches("dyn-eth-"));
+            for p in names.into_iter().filter(|n| n.starts_with("ovs-eth-")) {
+                println!("{}", p.trim_start_matches("ovs-eth-"));
             }
             Ok(())
         }

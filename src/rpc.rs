@@ -29,13 +29,13 @@ impl PortAgent {
         "pong".into()
     }
 
-    /// List OVS ports on the managed bridge
+    /// List container interfaces on the managed bridge
     fn list_ports(&self) -> zbus::fdo::Result<Vec<String>> {
         nmcli_dyn::list_connection_names()
             .map(|v| {
                 v.into_iter()
-                    .filter(|n| n.starts_with("dyn-eth-"))
-                    .map(|n| n.trim_start_matches("dyn-eth-").to_string())
+                    .filter(|n| n.starts_with("ovs-eth-"))
+                    .map(|n| n.trim_start_matches("ovs-eth-").to_string())
                     .collect()
             })
             .map_err(|e| zbus::fdo::Error::Failed(format!("{}", e)))

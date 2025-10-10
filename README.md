@@ -74,7 +74,7 @@ Interface: `dev.ovs.PortAgent1`
 # Health check
 gdbus call --system --dest dev.ovs.PortAgent1 --object-path /dev/ovs/PortAgent1 --method dev.ovs.PortAgent1.ping
 
-# List ports on the managed bridge
+# List container interfaces on the managed bridge
 gdbus call --system --dest dev.ovs.PortAgent1 --object-path /dev/ovs/PortAgent1 --method dev.ovs.PortAgent1.list_ports
 
 # Create/remove container interfaces
@@ -96,7 +96,7 @@ gdbus call --system --dest dev.ovs.PortAgent1 --object-path /dev/ovs/PortAgent1 
 # Remove container interface
 ./target/release/ovs-port-agent remove-interface vi100
 
-# List container interfaces via CLI
+# List container interfaces via CLI (shows vi{VMID} names)
 ./target/release/ovs-port-agent list
 
 # Comprehensive NetworkManager introspection and debugging

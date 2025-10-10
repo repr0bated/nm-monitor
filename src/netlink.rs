@@ -62,7 +62,7 @@ pub async fn create_container_interface(
     }
 
     // Create NetworkManager connections for the interface
-    nmcli_dyn::ensure_dynamic_port(&bridge, &target_name)
+    nmcli_dyn::ensure_proactive_port(&bridge, &target_name)
         .with_context(|| format!("create NM connections for {target_name}"))?;
 
     // Log the interface creation
@@ -109,8 +109,12 @@ pub async fn remove_container_interface(
 
     info!("Removing container interface: {}", interface_name);
 
-    // Remove NetworkManager connections
-    nmcli_dyn::remove_dynamic_port(interface_name)
+    // Remove NetworkManager connections using proactive naming
+    let port_name = format!("ovs-port-{}", interface_name);
+    let eth_name = format!("ovs-eth-{}", interface_name);
+
+    info!("Removing OVS port connection: {}", port_name);
+    nmcli_dyn::remove_proactive_port(&port_name, &eth_name)
         .with_context(|| format!("remove NM connections for {interface_name}"))?;
 
     // Remove FUSE bind mount
