@@ -30,9 +30,10 @@ impl Default for OvsBridgeConfig {
 
 /// Ensure the full bridge topology (bridge + internal port + optional uplink) exists
 pub fn ensure_bridge_topology(bridge: &str, uplink: Option<&str>, wait_seconds: u32) -> Result<()> {
-    #[allow(clippy::field_reassign_with_default)]
-    let mut cfg = OvsBridgeConfig::default();
-    cfg.name = bridge.to_string();
+    let cfg = OvsBridgeConfig {
+        name: bridge.to_string(),
+        ..Default::default()
+    };
 
     if connection_exists(bridge)? {
         modify_ovs_bridge(&cfg)?;

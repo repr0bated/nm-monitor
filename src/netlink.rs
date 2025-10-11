@@ -82,8 +82,12 @@ pub async fn create_container_interface(
     );
 
     // Create FUSE bind mount for Proxmox visibility
-    if let Err(e) = bind_veth_interface(&target_name, &target_name) {
-        warn!("Failed to bind veth interface {}: {}", target_name, e);
+    // Source is the Proxmox veth identifier (pre-rename), destination is the OVS-facing interface
+    if let Err(e) = bind_veth_interface(raw_ifname, &target_name) {
+        warn!(
+            "Failed to bind Proxmox veth {} to {}: {}",
+            raw_ifname, target_name, e
+        );
     }
 
     // Update /etc/network/interfaces for Proxmox GUI visibility

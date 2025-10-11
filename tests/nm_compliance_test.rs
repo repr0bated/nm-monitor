@@ -181,7 +181,7 @@ mod nm_compliance_tests {
 }
 
 /// Integration tests that would run with actual NetworkManager
-#[cfg(all(test, feature = "integration"))]
+#[cfg(test)]
 mod integration_tests {
     use super::*;
 
