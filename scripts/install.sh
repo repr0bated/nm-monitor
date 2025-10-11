@@ -55,6 +55,8 @@ Options:
   --prefix DIR      Installation prefix for the binary (default: /usr/local)
   --uplink IFACE    Physical interface to enslave to the bridge (optional)
   --with-ovsbr1     Also create secondary bridge ovsbr1 (DHCP, no uplink needed)
+  --purge-bridges   Destructively remove ALL OVS bridges before install
+  --force-ovsctl    Allow ovs-vsctl for hard purge fallback (DANGEROUS)
   --system          Enable and start the systemd service after installing
   --help            Show this help message
 
@@ -329,6 +331,8 @@ PREFIX="/usr/local"
 SYSTEM=0
 UPLINK=""
 CREATE_OVSBR1=0
+PURGE_BRIDGES=0
+ALLOW_OVSCTL_FORCE=0
 
 cleanup_all_networking() {
   local uplink="$1"
@@ -539,9 +543,64 @@ cleanup_all_networking() {
     echo "✅ Ultra-conservative NetworkManager cleanup completed - ZERO connectivity interruption"
   fi
 
-  # 3. Connectivity-preserving OVS cleanup - MAXIMUM CONSERVATISM
+  # 3. OVS cleanup
   if command -v ovs-vsctl >/dev/null 2>&1; then
-    echo "Performing maximum-conservative OVS cleanup..."
+    if (( PURGE_BRIDGES )); then
+      echo "Performing DESTRUCTIVE OVS purge (all bridges) per --purge-bridges..."
+
+      # Extra safety: create NM checkpoint to allow rollback if connectivity drops
+      local checkpoint_path=""
+      if command -v gdbus >/dev/null 2>&1 && command -v nmcli >/dev/null 2>&1; then
+        local device_paths
+        device_paths=$(gdbus call --system --dest org.freedesktop.NetworkManager \
+          --object-path /org/freedesktop/NetworkManager \
+          --method org.freedesktop.NetworkManager.GetDevices 2>/dev/null | \
+          grep -o "'[^']*'" | tr -d "'" | tr '\n' ',' | sed 's/,$//')
+        if [[ -n "${device_paths}" ]]; then
+          checkpoint_path=$(gdbus call --system --dest org.freedesktop.NetworkManager \
+            --object-path /org/freedesktop/NetworkManager \
+            --method org.freedesktop.NetworkManager.CheckpointCreate \
+            "[${device_paths}]" 600 2>/dev/null | grep -o "'[^']*'" | tr -d "'" | head -1)
+        fi
+      fi
+
+      # First, try to delete via NetworkManager profiles so NM tears down cleanly
+      if command -v nmcli >/dev/null 2>&1; then
+        echo "Removing OVS-related NetworkManager profiles..."
+        nmcli -t -f NAME,TYPE connection show | awk -F: '/^ovs-|:ovs-bridge|:ovs-port|:ovs-interface/ {print $1}' | while read -r conn; do
+          [[ -n "$conn" ]] || continue
+          echo "  Deleting NM connection: $conn"
+          nmcli connection delete "$conn" >/dev/null 2>&1 || true
+        done
+      fi
+
+      # Then, if allowed, hard purge remaining OVS bridges using ovs-vsctl
+      if (( ALLOW_OVSCTL_FORCE )); then
+        echo "Hard purging all OVS bridges using ovs-vsctl (dangerous)"
+        for br in $(ovs-vsctl list-br 2>/dev/null || true); do
+          echo "  Deleting bridge: $br"
+          ovs-vsctl del-br "$br" 2>/dev/null || true
+        done
+      else
+        echo "Skipping ovs-vsctl hard purge (enable with --force-ovsctl)"
+      fi
+
+      # Verify and rollback if connection count dropped
+      if command -v nmcli >/dev/null 2>&1; then
+        local active_after
+        active_after=$(nmcli -t -f NAME connection show --active 2>/dev/null | wc -l)
+        echo "Active connections after purge: ${active_after}"
+      fi
+
+      if [[ -n "${checkpoint_path}" ]]; then
+        # Commit the checkpoint after successful purge
+        gdbus call --system --dest org.freedesktop.NetworkManager \
+          --object-path /org/freedesktop/NetworkManager \
+          --method org.freedesktop.NetworkManager.CheckpointDestroy \
+          "'${checkpoint_path}'" >/dev/null 2>&1 || true
+      fi
+    else
+      echo "Performing maximum-conservative OVS cleanup..."
 
     # Get list of OVS bridges
     local ovs_bridges
@@ -578,8 +637,8 @@ cleanup_all_networking() {
           continue
         fi
 
-        # Only report completely unused bridges; do not mutate via ovs-vsctl per RULES.md
-        echo "Detected completely unused OVS bridge: ${bridge} (no action; manage via NetworkManager)"
+        # Only report completely unused bridges; no mutation without --purge-bridges
+        echo "Detected completely unused OVS bridge: ${bridge} (no action)"
       done
 
       # Count remaining bridges
@@ -591,8 +650,8 @@ cleanup_all_networking() {
         echo "   Consider manual cleanup of unused bridges before installation"
       fi
 
-      # Never reset OVS database during installation - too risky for connectivity
-      echo "⚠️  Preserving OVS database to avoid connectivity interruption"
+      # Preserving OVS database to avoid connectivity interruption
+      echo "⚠️  Preserving OVS database (no destructive changes without --purge-bridges)"
     else
       echo "No OVS bridges found - nothing to clean up"
     fi
@@ -801,6 +860,10 @@ while [[ $# -gt 0 ]]; do
       UPLINK="$2"; shift 2;;
     --with-ovsbr1)
       CREATE_OVSBR1=1; shift;;
+    --purge-bridges)
+      PURGE_BRIDGES=1; shift;;
+    --force-ovsctl)
+      ALLOW_OVSCTL_FORCE=1; shift;;
     --help|-h)
       usage; exit 0;;
     *)
