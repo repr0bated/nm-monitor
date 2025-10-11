@@ -332,7 +332,12 @@ SYSTEM=0
 UPLINK=""
 CREATE_OVSBR1=0
 <<<<<<< Current (Your changes)
+<<<<<<< Current (Your changes)
 PURGE_BRIDGES=0
+=======
+# Default to purging OVS bridges via NetworkManager for clean slate
+PURGE_BRIDGES=1
+>>>>>>> Incoming (Background Agent changes)
 =======
 # Default to purging OVS bridges via NetworkManager for clean slate
 PURGE_BRIDGES=1

@@ -19,4 +19,3 @@ pub fn list_connection_names() -> Result<Vec<String>> {
 
     Ok(names)
 }
-
