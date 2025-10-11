@@ -150,7 +150,7 @@ if command -v gdbus >/dev/null 2>&1 && command -v nmcli >/dev/null 2>&1; then
       "[$DEVICE_PATHS]" 600 2>/dev/null | grep -o "'[^']*'" | tr -d "'" | head -1) # Increased timeout to 10 minutes
 
     if [[ -n "${CHECKPOINT_PATH}" ]]; then
-      echo "✅ Checkpoint created: ${CHECKPOINT_PATH} (10 minute timeout)"
+      echo "✅ Checkpoint created: ${CHECKPOINT_PATH} (30s timeout)"
       echo "${CHECKPOINT_PATH}" > "${BACKUP_DIR}/nm_checkpoint"
     else
       echo "⚠️  Failed to create NetworkManager checkpoint"
@@ -331,7 +331,12 @@ PREFIX="/usr/local"
 SYSTEM=0
 UPLINK=""
 CREATE_OVSBR1=0
+<<<<<<< Current (Your changes)
 PURGE_BRIDGES=0
+=======
+# Default to purging OVS bridges via NetworkManager for clean slate
+PURGE_BRIDGES=1
+>>>>>>> Incoming (Background Agent changes)
 ALLOW_OVSCTL_FORCE=0
 
 detach_uplink_if_enslaved() {
