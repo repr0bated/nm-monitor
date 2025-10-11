@@ -4,7 +4,7 @@ use std::future;
 use zbus::{fdo::IntrospectableProxy, ConnectionBuilder};
 
 // use crate::ledger::Ledger; // reserved for future action logging via DBus
-use crate::nmcli_dyn;
+use crate::nm_query;
 // use std::path::PathBuf; // reserved for future file parameterization
 
 pub struct AppState {
@@ -28,7 +28,7 @@ impl PortAgent {
     }
 
     fn list_ports(&self) -> zbus::fdo::Result<Vec<String>> {
-        nmcli_dyn::list_connection_names()
+        nm_query::list_connection_names()
             .map(|v| {
                 v.into_iter()
                     .filter(|n| n.starts_with("ovs-eth-"))

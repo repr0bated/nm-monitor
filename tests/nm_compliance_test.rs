@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod nm_compliance_tests {
-    use super::*;
+    #![allow(unused_imports, unused_variables, dead_code)]
     use std::process::Command;
 
     /// Test helper to run nmcli commands
@@ -20,7 +20,7 @@ mod nm_compliance_tests {
     /// Test OVS bridge connection properties
     #[test]
     fn test_ovs_bridge_properties() {
-        let bridge_name = "test-ovsbr0";
+        let _bridge_name = "test-ovsbr0";
 
         // Check required properties according to NetworkManager documentation
         let expected_props = vec![
@@ -183,7 +183,7 @@ mod nm_compliance_tests {
 /// Integration tests that would run with actual NetworkManager
 #[cfg(test)]
 mod integration_tests {
-    use super::*;
+    #![allow(unused_imports)]
 
     #[test]
     fn test_create_and_validate_bridge() {

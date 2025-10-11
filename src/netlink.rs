@@ -3,7 +3,7 @@ use crate::interfaces::update_interfaces_block;
 use crate::ledger::Ledger;
 use crate::link;
 use crate::naming::render_template;
-use crate::nmcli_dyn;
+use crate::nm_ports;
 use anyhow::{Context, Result};
 use log::{info, warn};
 use std::path::PathBuf;
@@ -65,7 +65,7 @@ pub async fn create_container_interface(
     }
 
     // Create NetworkManager connections for the interface
-    nmcli_dyn::ensure_proactive_port(&bridge, &target_name)
+    nm_ports::ensure_proactive_port(&bridge, &target_name)
         .with_context(|| format!("create NM connections for {target_name}"))?;
 
     // Log the interface creation
@@ -121,7 +121,7 @@ pub async fn remove_container_interface(
     let eth_name = format!("ovs-eth-{}", interface_name);
 
     info!("Removing OVS port connection: {}", port_name);
-    nmcli_dyn::remove_proactive_port(&port_name, &eth_name)
+    nm_ports::remove_proactive_port(&port_name, &eth_name)
         .with_context(|| format!("remove NM connections for {interface_name}"))?;
 
     // Remove FUSE bind mount
