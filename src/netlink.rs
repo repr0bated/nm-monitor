@@ -1,6 +1,4 @@
-use crate::fuse::{
-    bind_veth_interface, ensure_fuse_mount_base, unbind_veth_interface,
-};
+use crate::fuse::{bind_veth_interface, ensure_fuse_mount_base, unbind_veth_interface};
 use crate::interfaces::update_interfaces_block;
 use crate::ledger::Ledger;
 use crate::link;
@@ -36,7 +34,10 @@ pub async fn create_container_interface(
         raw_ifname.to_string()
     };
 
-    info!("Creating container interface: {} -> {}", raw_ifname, target_name);
+    info!(
+        "Creating container interface: {} -> {}",
+        raw_ifname, target_name
+    );
 
     // Rename the interface if needed
     if enable_rename && raw_ifname != target_name {
@@ -134,15 +135,11 @@ pub async fn remove_container_interface(
 
     // Update /etc/network/interfaces
     let names: Vec<String> = Vec::new();
-    update_interfaces_block(
-        &interfaces_path,
-        &managed_tag,
-        &names,
-        &bridge,
-        None,
-    )?;
+    update_interfaces_block(&interfaces_path, &managed_tag, &names, &bridge, None)?;
 
-    info!("Successfully removed container interface: {}", interface_name);
+    info!(
+        "Successfully removed container interface: {}",
+        interface_name
+    );
     Ok(())
 }
-

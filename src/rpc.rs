@@ -68,30 +68,40 @@ impl PortAgent {
     }
 
     /// Create a container interface with proper vi{VMID} naming
-    fn create_container_interface(&self, raw_ifname: &str, container_id: &str, vmid: u32) -> zbus::fdo::Result<String> {
+    fn create_container_interface(
+        &self,
+        raw_ifname: &str,
+        container_id: &str,
+        vmid: u32,
+    ) -> zbus::fdo::Result<String> {
         // Use default configuration values for container interface creation
         let interfaces_path = "/etc/network/interfaces".to_string();
         let managed_tag = "ovs-port-agent".to_string();
         let enable_rename = true;
         let naming_template = "vi{container}".to_string();
 
-        match tokio::runtime::Handle::current()
-            .block_on(async {
-                crate::netlink::create_container_interface(
-                    self.state.bridge.clone(),
-                    raw_ifname,
-                    container_id,
-                    vmid,
-                    interfaces_path,
-                    managed_tag,
-                    enable_rename,
-                    naming_template,
-                    self.state.ledger_path.clone(),
-                ).await
-            }) {
-                Ok(_) => {},
-                Err(e) => return Err(zbus::fdo::Error::Failed(format!("Failed to create container interface: {}", e))),
+        match tokio::runtime::Handle::current().block_on(async {
+            crate::netlink::create_container_interface(
+                self.state.bridge.clone(),
+                raw_ifname,
+                container_id,
+                vmid,
+                interfaces_path,
+                managed_tag,
+                enable_rename,
+                naming_template,
+                self.state.ledger_path.clone(),
+            )
+            .await
+        }) {
+            Ok(_) => {}
+            Err(e) => {
+                return Err(zbus::fdo::Error::Failed(format!(
+                    "Failed to create container interface: {}",
+                    e
+                )))
             }
+        }
 
         Ok(format!("Container interface created for VMID {}", vmid))
     }
@@ -102,30 +112,38 @@ impl PortAgent {
         let interfaces_path = "/etc/network/interfaces".to_string();
         let managed_tag = "ovs-port-agent".to_string();
 
-        match tokio::runtime::Handle::current()
-            .block_on(async {
-                crate::netlink::remove_container_interface(
-                    self.state.bridge.clone(),
-                    interface_name,
-                    interfaces_path,
-                    managed_tag,
-                    self.state.ledger_path.clone(),
-                ).await
-            }) {
-                Ok(_) => {},
-                Err(e) => return Err(zbus::fdo::Error::Failed(format!("Failed to remove container interface: {}", e))),
+        match tokio::runtime::Handle::current().block_on(async {
+            crate::netlink::remove_container_interface(
+                self.state.bridge.clone(),
+                interface_name,
+                interfaces_path,
+                managed_tag,
+                self.state.ledger_path.clone(),
+            )
+            .await
+        }) {
+            Ok(_) => {}
+            Err(e) => {
+                return Err(zbus::fdo::Error::Failed(format!(
+                    "Failed to remove container interface: {}",
+                    e
+                )))
             }
+        }
 
         Ok(format!("Container interface {} removed", interface_name))
     }
 
     /// Perform comprehensive NetworkManager introspection
     fn introspect_network_manager(&self) -> zbus::fdo::Result<String> {
-        match tokio::runtime::Handle::current().block_on(async {
-            crate::rpc::introspect_nm().await
-        }) {
+        match tokio::runtime::Handle::current()
+            .block_on(async { crate::rpc::introspect_nm().await })
+        {
             Ok(_) => Ok("NetworkManager introspection completed successfully".to_string()),
-            Err(e) => Err(zbus::fdo::Error::Failed(format!("NetworkManager introspection failed: {}", e))),
+            Err(e) => Err(zbus::fdo::Error::Failed(format!(
+                "NetworkManager introspection failed: {}",
+                e
+            ))),
         }
     }
 }
@@ -155,13 +173,22 @@ pub async fn introspect_nm() -> Result<()> {
 
     println!("🔍 NetworkManager Comprehensive Introspection Report");
     println!("==================================================");
-    println!("Timestamp: {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"));
+    println!(
+        "Timestamp: {}",
+        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+    );
     println!();
 
     // 1. NetworkManager Main Object
     println!("📡 1. NetworkManager Main Object");
     println!("--------------------------------");
-    match introspect_object(&conn, "org.freedesktop.NetworkManager", "/org/freedesktop/NetworkManager").await {
+    match introspect_object(
+        &conn,
+        "org.freedesktop.NetworkManager",
+        "/org/freedesktop/NetworkManager",
+    )
+    .await
+    {
         Ok(xml) => {
             println!("✅ Successfully introspected main NetworkManager object");
             println!("Properties and methods available:");
@@ -177,7 +204,13 @@ pub async fn introspect_nm() -> Result<()> {
     // 2. NetworkManager Settings Object
     println!("⚙️  2. NetworkManager Settings Object");
     println!("-----------------------------------");
-    match introspect_object(&conn, "org.freedesktop.NetworkManager", "/org/freedesktop/NetworkManager/Settings").await {
+    match introspect_object(
+        &conn,
+        "org.freedesktop.NetworkManager",
+        "/org/freedesktop/NetworkManager/Settings",
+    )
+    .await
+    {
         Ok(xml) => {
             println!("✅ Successfully introspected Settings object");
             print_introspection_summary(&xml);
@@ -195,7 +228,8 @@ pub async fn introspect_nm() -> Result<()> {
         Ok(devices) => {
             println!("✅ Found {} devices", devices.len());
             for (i, device) in devices.iter().enumerate() {
-                println!("  {}. {} - {} ({})",
+                println!(
+                    "  {}. {} - {} ({})",
                     i + 1,
                     device.interface,
                     device.device_type,
@@ -216,7 +250,8 @@ pub async fn introspect_nm() -> Result<()> {
         Ok(connections) => {
             println!("✅ Found {} active connections", connections.len());
             for (i, conn_info) in connections.iter().enumerate() {
-                println!("  {}. {} - {} ({})",
+                println!(
+                    "  {}. {} - {} ({})",
                     i + 1,
                     conn_info.name,
                     conn_info.connection_type,
@@ -237,7 +272,8 @@ pub async fn introspect_nm() -> Result<()> {
         Ok(connections) => {
             println!("✅ Found {} total connections", connections.len());
             for (i, conn_info) in connections.iter().enumerate() {
-                println!("  {}. {} - {} ({})",
+                println!(
+                    "  {}. {} - {} ({})",
                     i + 1,
                     conn_info.name,
                     conn_info.connection_type,
@@ -258,7 +294,8 @@ pub async fn introspect_nm() -> Result<()> {
         Ok(ovs_connections) => {
             println!("✅ Found {} OVS-related connections", ovs_connections.len());
             for (i, conn_info) in ovs_connections.iter().enumerate() {
-                println!("  {}. {} - {} ({})",
+                println!(
+                    "  {}. {} - {} ({})",
                     i + 1,
                     conn_info.name,
                     conn_info.connection_type,
@@ -314,7 +351,11 @@ pub async fn introspect_nm() -> Result<()> {
 }
 
 // Helper function to introspect a D-Bus object with error handling
-async fn introspect_object(conn: &zbus::Connection, destination: &str, path: &str) -> Result<String> {
+async fn introspect_object(
+    conn: &zbus::Connection,
+    destination: &str,
+    path: &str,
+) -> Result<String> {
     match IntrospectableProxy::builder(conn)
         .destination(destination)?
         .path(path)?
@@ -325,7 +366,11 @@ async fn introspect_object(conn: &zbus::Connection, destination: &str, path: &st
             Ok(xml) => Ok(xml),
             Err(e) => Err(anyhow::anyhow!("Failed to introspect {}: {}", path, e)),
         },
-        Err(e) => Err(anyhow::anyhow!("Failed to create proxy for {}: {}", path, e)),
+        Err(e) => Err(anyhow::anyhow!(
+            "Failed to create proxy for {}: {}",
+            path,
+            e
+        )),
     }
 }
 
@@ -355,7 +400,8 @@ async fn get_nm_devices(_conn: &zbus::Connection) -> Result<Vec<DeviceInfo>> {
                     "ovs-port" => "OVS Port",
                     "ovs-bridge" => "OVS Bridge",
                     _ => "Unknown",
-                }.to_string();
+                }
+                .to_string();
 
                 let state_str = match state {
                     "unmanaged" => "Unmanaged",
@@ -371,7 +417,8 @@ async fn get_nm_devices(_conn: &zbus::Connection) -> Result<Vec<DeviceInfo>> {
                     "deactivating" => "Deactivating",
                     "failed" => "Failed",
                     _ => "Unknown",
-                }.to_string();
+                }
+                .to_string();
 
                 device_infos.push(DeviceInfo {
                     interface: device.to_string(),
@@ -389,7 +436,14 @@ async fn get_nm_devices(_conn: &zbus::Connection) -> Result<Vec<DeviceInfo>> {
 async fn get_nm_active_connections(_conn: &zbus::Connection) -> Result<Vec<ConnectionInfo>> {
     // Use nmcli for active connections since D-Bus API is complex
     let output = std::process::Command::new("nmcli")
-        .args(["-t", "-f", "NAME,UUID,TYPE,STATE", "connection", "show", "--active"])
+        .args([
+            "-t",
+            "-f",
+            "NAME,UUID,TYPE,STATE",
+            "connection",
+            "show",
+            "--active",
+        ])
         .output()
         .context("Failed to get NetworkManager active connections")?;
 
@@ -410,7 +464,8 @@ async fn get_nm_active_connections(_conn: &zbus::Connection) -> Result<Vec<Conne
                         "deactivated" => "Deactivated",
                         "deactivating" => "Deactivating",
                         _ => "Unknown",
-                    }.to_string();
+                    }
+                    .to_string();
 
                     connection_infos.push(ConnectionInfo {
                         name: name.to_string(),
@@ -502,7 +557,9 @@ async fn get_system_network_state() -> Result<SystemNetworkState> {
         .output()?;
 
     let nm_state = if nm_state_output.status.success() {
-        String::from_utf8_lossy(&nm_state_output.stdout).trim().to_string()
+        String::from_utf8_lossy(&nm_state_output.stdout)
+            .trim()
+            .to_string()
     } else {
         "Unknown".to_string()
     };
@@ -512,7 +569,9 @@ async fn get_system_network_state() -> Result<SystemNetworkState> {
         .output()?;
 
     let connectivity = if connectivity_output.status.success() {
-        String::from_utf8_lossy(&connectivity_output.stdout).trim().to_string()
+        String::from_utf8_lossy(&connectivity_output.stdout)
+            .trim()
+            .to_string()
     } else {
         "Unknown".to_string()
     };
@@ -567,8 +626,10 @@ fn print_introspection_summary(xml: &str) {
         }
     }
 
-    println!("  📊 Summary: {} interfaces, {} methods, {} properties, {} signals",
-             interfaces, methods, properties, signals);
+    println!(
+        "  📊 Summary: {} interfaces, {} methods, {} properties, {} signals",
+        interfaces, methods, properties, signals
+    );
 }
 
 // Data structures for introspection results

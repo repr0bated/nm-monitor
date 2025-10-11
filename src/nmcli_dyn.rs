@@ -366,7 +366,10 @@ pub fn remove_dynamic_port(ifname: &str) -> Result<()> {
 
 /// Removes NetworkManager connections with proper vi{VMID} naming for proactive system
 pub fn remove_proactive_port(port_name: &str, eth_name: &str) -> Result<()> {
-    info!("Removing proactive OVS port {} and ethernet {}", port_name, eth_name);
+    info!(
+        "Removing proactive OVS port {} and ethernet {}",
+        port_name, eth_name
+    );
 
     // Deactivate ethernet connection first (this will deactivate the port as well)
     if connection_exists(&eth_name)? {
