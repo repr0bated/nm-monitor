@@ -48,10 +48,10 @@ pub fn ensure_proactive_port(bridge: &str, ifname: &str) -> Result<()> {
     }
 
     // Only delete if exists but is not active
-    if connection_exists(&port_name)? {
+    if connection_exists(port_name)? {
         debug!("Deleting inactive OVS port {} for recreation", port_name);
         let _ = Command::new("nmcli")
-            .args(["connection", "delete", &port_name])
+            .args(["connection", "delete", port_name])
             .output();
     }
 
@@ -83,13 +83,13 @@ pub fn ensure_proactive_port(bridge: &str, ifname: &str) -> Result<()> {
     }
 
     // Handle ethernet slave connection - always create fresh with enslavement
-    if connection_exists(&eth_name)? {
+    if connection_exists(eth_name)? {
         debug!(
             "Deleting existing ethernet connection {} for recreation",
             eth_name
         );
         let _ = Command::new("nmcli")
-            .args(["connection", "delete", &eth_name])
+            .args(["connection", "delete", eth_name])
             .output();
     }
 
@@ -172,10 +172,10 @@ pub fn ensure_dynamic_port(bridge: &str, ifname: &str) -> Result<()> {
     }
 
     // Only delete if exists but is not active
-    if connection_exists(&port_name)? {
+    if connection_exists(port_name)? {
         debug!("Deleting inactive OVS port {} for recreation", port_name);
         let _ = Command::new("nmcli")
-            .args(["connection", "delete", &port_name])
+            .args(["connection", "delete", port_name])
             .output();
     }
 
@@ -207,13 +207,13 @@ pub fn ensure_dynamic_port(bridge: &str, ifname: &str) -> Result<()> {
     }
 
     // Handle ethernet slave connection - always create fresh with enslavement
-    if connection_exists(&eth_name)? {
+    if connection_exists(eth_name)? {
         debug!(
             "Deleting existing ethernet connection {} for recreation",
             eth_name
         );
         let _ = Command::new("nmcli")
-            .args(["connection", "delete", &eth_name])
+            .args(["connection", "delete", eth_name])
             .output();
     }
 
@@ -312,10 +312,10 @@ pub fn remove_dynamic_port(ifname: &str) -> Result<()> {
     );
 
     // Deactivate ethernet connection first (this will deactivate the port as well)
-    if connection_exists(&eth_name)? {
+    if connection_exists(eth_name)? {
         debug!("Deactivating ethernet connection {}", eth_name);
         let output = Command::new("nmcli")
-            .args(["connection", "down", &eth_name])
+            .args(["connection", "down", eth_name])
             .output()
             .context("Failed to deactivate ethernet connection")?;
 
@@ -330,7 +330,7 @@ pub fn remove_dynamic_port(ifname: &str) -> Result<()> {
         // Delete ethernet connection
         debug!("Deleting ethernet connection {}", eth_name);
         let output = Command::new("nmcli")
-            .args(["connection", "delete", &eth_name])
+            .args(["connection", "delete", eth_name])
             .output()
             .context("Failed to delete ethernet connection")?;
 
@@ -344,10 +344,10 @@ pub fn remove_dynamic_port(ifname: &str) -> Result<()> {
     }
 
     // Delete OVS port connection
-    if connection_exists(&port_name)? {
+    if connection_exists(port_name)? {
         debug!("Deleting OVS port {}", port_name);
         let output = Command::new("nmcli")
-            .args(["connection", "delete", &port_name])
+            .args(["connection", "delete", port_name])
             .output()
             .context("Failed to delete OVS port")?;
 
@@ -366,13 +366,16 @@ pub fn remove_dynamic_port(ifname: &str) -> Result<()> {
 
 /// Removes NetworkManager connections with proper vi{VMID} naming for proactive system
 pub fn remove_proactive_port(port_name: &str, eth_name: &str) -> Result<()> {
-    info!("Removing proactive OVS port {} and ethernet {}", port_name, eth_name);
+    info!(
+        "Removing proactive OVS port {} and ethernet {}",
+        port_name, eth_name
+    );
 
     // Deactivate ethernet connection first (this will deactivate the port as well)
-    if connection_exists(&eth_name)? {
+    if connection_exists(eth_name)? {
         debug!("Deactivating ethernet connection {}", eth_name);
         let output = Command::new("nmcli")
-            .args(["connection", "down", &eth_name])
+            .args(["connection", "down", eth_name])
             .output()
             .context("Failed to deactivate ethernet connection")?;
 
@@ -387,7 +390,7 @@ pub fn remove_proactive_port(port_name: &str, eth_name: &str) -> Result<()> {
         // Delete ethernet connection
         debug!("Deleting ethernet connection {}", eth_name);
         let output = Command::new("nmcli")
-            .args(["connection", "delete", &eth_name])
+            .args(["connection", "delete", eth_name])
             .output()
             .context("Failed to delete ethernet connection")?;
 
@@ -401,10 +404,10 @@ pub fn remove_proactive_port(port_name: &str, eth_name: &str) -> Result<()> {
     }
 
     // Delete OVS port connection
-    if connection_exists(&port_name)? {
+    if connection_exists(port_name)? {
         debug!("Deleting OVS port {}", port_name);
         let output = Command::new("nmcli")
-            .args(["connection", "delete", &port_name])
+            .args(["connection", "delete", port_name])
             .output()
             .context("Failed to delete OVS port")?;
 

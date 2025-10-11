@@ -6,6 +6,7 @@ use std::{fs, path::Path};
 pub struct Config {
     pub bridge_name: String,
     pub interfaces_path: String,
+    #[allow(dead_code)]
     pub include_prefixes: Vec<String>,
     pub managed_block_tag: String,
     pub naming_template: String,

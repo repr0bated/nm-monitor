@@ -1,6 +1,4 @@
-use crate::fuse::{
-    bind_veth_interface, ensure_fuse_mount_base, unbind_veth_interface,
-};
+use crate::fuse::{bind_veth_interface, ensure_fuse_mount_base, unbind_veth_interface};
 use crate::interfaces::update_interfaces_block;
 use crate::ledger::Ledger;
 use crate::link;
@@ -11,6 +9,7 @@ use log::{info, warn};
 use std::path::PathBuf;
 /// Proactively create a container interface with proper vi{VMID} naming
 /// This replaces the monitoring approach with immediate creation
+#[allow(clippy::too_many_arguments)]
 pub async fn create_container_interface(
     bridge: String,
     raw_ifname: &str,
@@ -36,9 +35,13 @@ pub async fn create_container_interface(
         raw_ifname.to_string()
     };
 
-    info!("Creating container interface: {} -> {}", raw_ifname, target_name);
+    info!(
+        "Creating container interface: {} -> {}",
+        raw_ifname, target_name
+    );
 
     // Rename the interface if needed
+    #[allow(clippy::collapsible_if)]
     if enable_rename && raw_ifname != target_name {
         if !link::exists(&target_name) {
             if let Err(e) = link::rename_safely(raw_ifname, &target_name) {
@@ -134,15 +137,11 @@ pub async fn remove_container_interface(
 
     // Update /etc/network/interfaces
     let names: Vec<String> = Vec::new();
-    update_interfaces_block(
-        &interfaces_path,
-        &managed_tag,
-        &names,
-        &bridge,
-        None,
-    )?;
+    update_interfaces_block(&interfaces_path, &managed_tag, &names, &bridge, None)?;
 
-    info!("Successfully removed container interface: {}", interface_name);
+    info!(
+        "Successfully removed container interface: {}",
+        interface_name
+    );
     Ok(())
 }
-

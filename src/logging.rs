@@ -1,8 +1,8 @@
 use log::LevelFilter;
 
 pub fn init_logging() {
-      #[allow(clippy::bind_instead_of_map)]
-      if systemd_journal_logger::JournalLog::new()
+    #[allow(clippy::bind_instead_of_map)]
+    if systemd_journal_logger::JournalLog::new()
         .and_then(|j| Ok(j.install()))
         .is_ok()
     {

@@ -90,7 +90,11 @@ async fn main() -> Result<()> {
 
             info!("OVS Port Agent initialized successfully");
             info!("Container interface creation available via D-Bus API");
-            info!("Bridge: {} (uplink: {})", cfg.bridge_name, cfg.uplink.as_deref().unwrap_or("none"));
+            info!(
+                "Bridge: {} (uplink: {})",
+                cfg.bridge_name,
+                cfg.uplink.as_deref().unwrap_or("none")
+            );
 
             // Run the RPC service - container interfaces will be created via D-Bus API calls
             rpc::serve_with_state(rpc_state).await?;
@@ -101,7 +105,11 @@ async fn main() -> Result<()> {
             println!("{}", name);
             Ok(())
         }
-        Commands::CreateInterface { raw_ifname, container_id, vmid } => {
+        Commands::CreateInterface {
+            raw_ifname,
+            container_id,
+            vmid,
+        } => {
             let bridge = cfg.bridge_name;
             let interfaces_path = cfg.interfaces_path;
             let managed_tag = cfg.managed_block_tag;
@@ -119,7 +127,8 @@ async fn main() -> Result<()> {
                 enable_rename,
                 naming_template,
                 ledger_path,
-            ).await?;
+            )
+            .await?;
             println!("Container interface created successfully for VMID {}", vmid);
             Ok(())
         }
@@ -135,8 +144,12 @@ async fn main() -> Result<()> {
                 interfaces_path,
                 managed_tag,
                 ledger_path,
-            ).await?;
-            println!("Container interface {} removed successfully", interface_name);
+            )
+            .await?;
+            println!(
+                "Container interface {} removed successfully",
+                interface_name
+            );
             Ok(())
         }
         Commands::List => {
@@ -149,4 +162,3 @@ async fn main() -> Result<()> {
         Commands::Introspect => rpc::introspect_nm().await,
     }
 }
-

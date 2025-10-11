@@ -6,6 +6,7 @@ use std::process::Command;
 /// Best-effort heuristic:
 /// - Look for peer ifindex owner in /proc/*/ns/net that matches the veth peer
 /// - Fallback: derive from interface name prefix
+#[allow(dead_code)]
 pub fn container_short_name_from_ifname(ifname: &str) -> Option<String> {
     // Extract VMID from veth interface names like veth9000i1 -> 9000
     let mut s = ifname.to_string();
