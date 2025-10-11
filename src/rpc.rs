@@ -41,103 +41,59 @@ impl PortAgent {
             .map_err(|e| zbus::fdo::Error::Failed(format!("{}", e)))
     }
 
-    /// Add a port to the managed bridge
+    /// Add a port to the managed bridge (legacy API - deprecated)
     fn add_port(&self, name: &str) -> zbus::fdo::Result<()> {
-        nmcli_dyn::ensure_dynamic_port(&self.state.bridge, name)
-            .map_err(|e| zbus::fdo::Error::Failed(format!("{}", e)))?;
-        if let Ok(mut lg) = Ledger::open(PathBuf::from(&self.state.ledger_path)) {
-            let _ = lg.append(
-                "dbus_add_port",
-                serde_json::json!({"port": name, "interface": name, "bridge": self.state.bridge}),
-            );
-        }
-        Ok(())
-    }
-
-    /// Delete a port from the managed bridge
-    fn del_port(&self, name: &str) -> zbus::fdo::Result<()> {
-        nmcli_dyn::remove_dynamic_port(name)
-            .map_err(|e| zbus::fdo::Error::Failed(format!("{}", e)))?;
-        if let Ok(mut lg) = Ledger::open(PathBuf::from(&self.state.ledger_path)) {
-            let _ = lg.append(
-                "dbus_del_port",
-                serde_json::json!({"port": name, "interface": name, "bridge": self.state.bridge}),
-            );
-        }
-        Ok(())
-    }
-
-    /// Create a container interface with proper vi{VMID} naming
-    fn create_container_interface(
-        &self,
-        raw_ifname: &str,
-        container_id: &str,
-        vmid: u32,
-    ) -> zbus::fdo::Result<String> {
-        // Use default configuration values for container interface creation
+        // For backward compatibility, treat this as creating a container interface
+        // Use default configuration values
         let interfaces_path = "/etc/network/interfaces".to_string();
         let managed_tag = "ovs-port-agent".to_string();
         let enable_rename = true;
         let naming_template = "vi{container}".to_string();
 
-        match tokio::runtime::Handle::current().block_on(async {
-            crate::netlink::create_container_interface(
-                self.state.bridge.clone(),
-                raw_ifname,
-                container_id,
-                vmid,
-                interfaces_path,
-                managed_tag,
-                enable_rename,
-                naming_template,
-                self.state.ledger_path.clone(),
-            )
-            .await
-        }) {
-            Ok(_) => {}
-            Err(e) => {
-                return Err(zbus::fdo::Error::Failed(format!(
-                    "Failed to create container interface: {}",
-                    e
-                )))
-            }
-        }
+        tokio::runtime::Handle::current()
+            .block_on(async {
+                crate::netlink::create_container_interface(
+                    self.state.bridge.clone(),
+                    raw_ifname,
+                    container_id,
+                    vmid,
+                    interfaces_path,
+                    managed_tag,
+                    enable_rename,
+                    naming_template,
+                    self.state.ledger_path.clone(),
+                ).await
+            })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Failed to create container interface: {}", e)))?;
 
         Ok(format!("Container interface created for VMID {}", vmid))
     }
 
-    /// Remove a container interface
-    fn remove_container_interface(&self, interface_name: &str) -> zbus::fdo::Result<String> {
-        // Use default configuration values for container interface removal
+    /// Delete a port from the managed bridge (legacy API - deprecated)
+    fn del_port(&self, name: &str) -> zbus::fdo::Result<String> {
+        // For backward compatibility, treat this as removing a container interface
         let interfaces_path = "/etc/network/interfaces".to_string();
         let managed_tag = "ovs-port-agent".to_string();
 
-        match tokio::runtime::Handle::current().block_on(async {
-            crate::netlink::remove_container_interface(
-                self.state.bridge.clone(),
-                interface_name,
-                interfaces_path,
-                managed_tag,
-                self.state.ledger_path.clone(),
-            )
-            .await
-        }) {
-            Ok(_) => {}
-            Err(e) => {
-                return Err(zbus::fdo::Error::Failed(format!(
-                    "Failed to remove container interface: {}",
-                    e
-                )))
-            }
-        }
+        tokio::runtime::Handle::current()
+            .block_on(async {
+                crate::netlink::remove_container_interface(
+                    self.state.bridge.clone(),
+                    name,
+                    interfaces_path,
+                    managed_tag,
+                    self.state.ledger_path.clone(),
+                ).await
+            })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Failed to remove container interface: {}", e)))?;
 
-        Ok(format!("Container interface {} removed", interface_name))
+        Ok(format!("Container interface {} removed", name))
     }
 
     /// Perform comprehensive NetworkManager introspection
     fn introspect_network_manager(&self) -> zbus::fdo::Result<String> {
         match tokio::runtime::Handle::current()
-            .block_on(async { crate::rpc::introspect_nm().await })
+            .block_on(async { introspect_nm().await })
         {
             Ok(_) => Ok("NetworkManager introspection completed successfully".to_string()),
             Err(e) => Err(zbus::fdo::Error::Failed(format!(
@@ -165,8 +121,6 @@ pub async fn serve_with_state(state: AppState) -> Result<()> {
 }
 
 pub async fn introspect_nm() -> Result<()> {
-    use zbus::fdo::IntrospectableProxy;
-
     info!("Performing comprehensive D-Bus introspection on NetworkManager");
 
     let conn = zbus::Connection::system().await?;
@@ -356,12 +310,14 @@ async fn introspect_object(
     destination: &str,
     path: &str,
 ) -> Result<String> {
+    use zbus::fdo::IntrospectableProxy;
+
     match IntrospectableProxy::builder(conn)
         .destination(destination)?
-        .path(path)?
-        .build()
-        .await
-    {
+                            .path(path)?
+                            .build()
+                            .await
+                        {
         Ok(proxy) => match proxy.introspect().await {
             Ok(xml) => Ok(xml),
             Err(e) => Err(anyhow::anyhow!("Failed to introspect {}: {}", path, e)),
