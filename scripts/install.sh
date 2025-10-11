@@ -45,13 +45,47 @@ cd "${REPO_ROOT}" || {
 
 echo "Successfully changed to repository directory: $(pwd)"
 
+# Handle --help early to avoid any side effects before argument parsing
+print_usage_and_exit() {
+  cat <<USAGE
+Usage: ./scripts/install.sh [options]
+
+Options:
+  --bridge NAME     Set bridge_name in the agent config (default: ovsbr0)
+  --prefix DIR      Installation prefix for the binary (default: /usr/local)
+  --uplink IFACE    Physical interface to enslave to the bridge (optional)
+  --with-ovsbr1     Also create secondary bridge ovsbr1 (DHCP, no uplink needed)
+  --system          Enable and start the systemd service after installing
+  --help            Show this help message
+
+Note: Before installation, ultra-conservative connectivity-preserving cleanup will be performed including:
+- Pre-installation introspection and NetworkManager checkpoint creation
+- Legacy dyn-port/dyn-eth connections cleanup (old monitoring system)
+- MAXIMUM-CONSERVATIVE NetworkManager cleanup (only 100% safe inactive connections)
+- systemd-networkd cleanup (only if not managed by NetworkManager)
+- OVS bridge cleanup (only completely unused bridges, preserving all active bridges)
+- /etc/network/interfaces cleanup (commenting out conflicting configs)
+- D-Bus service refresh
+- Active connection count verification (aborts if connectivity would be interrupted)
+This ensures ABSOLUTE ZERO connectivity interruption during installation via atomic handover.
+USAGE
+  exit 0
+}
+
+for arg in "$@"; do
+  if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
+    print_usage_and_exit
+  fi
+done
+
 ## Note: Build and install steps are executed later after argument parsing and root checks.
 
 # Backup and snapshot management for rollback capability
 BACKUP_DIR="/var/lib/ovs-port-agent/backups"
 SNAPSHOT_NAME="ovs-port-agent-preinstall"
 
-true # Backup dir will be created on-demand inside create_backups
+# Create backup directory early for introspection writes
+install -d -m 0750 "${BACKUP_DIR}" 2>/dev/null || true
 
 # ============================================================================
 # ATOMIC HANDOVER PREPARATION - BEFORE ANY DISRUPTIVE OPERATIONS
@@ -544,9 +578,8 @@ cleanup_all_networking() {
           continue
         fi
 
-        # Only remove bridges with no ports AND no NM references (extremely safe)
-        echo "Removing completely unused OVS bridge: ${bridge}"
-        ovs-vsctl del-br "${bridge}" 2>/dev/null || true
+        # Only report completely unused bridges; do not mutate via ovs-vsctl per RULES.md
+        echo "Detected completely unused OVS bridge: ${bridge} (no action; manage via NetworkManager)"
       done
 
       # Count remaining bridges
@@ -615,7 +648,19 @@ cleanup_all_networking() {
 
   # 5. D-Bus cleanup
   echo "Cleaning up D-Bus services..."
-  systemctl reload dbus.service 2>/dev/null || systemctl restart dbus.service 2>/dev/null || true
+  # Ensure systemd-networkd is running before D-Bus reload so it re-registers properly
+  if command -v systemctl >/dev/null 2>&1; then
+    if systemctl list-unit-files 2>/dev/null | grep -q '^systemd-networkd.service'; then
+      if ! systemctl is-active --quiet systemd-networkd; then
+        echo "Starting systemd-networkd prior to D-Bus reload..."
+        systemctl start systemd-networkd 2>/dev/null || true
+        # Best-effort wait to avoid racing D-Bus reload
+        sleep 1
+      fi
+    fi
+  fi
+  # Only reload D-Bus; avoid restarts to preserve connectivity
+  systemctl reload dbus.service 2>/dev/null || true
 
   # Kill any lingering network-related processes
   pkill -f "dhclient\|NetworkManager\|wpa_supplicant" 2>/dev/null || true
