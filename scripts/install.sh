@@ -80,6 +80,12 @@ for arg in "$@"; do
   fi
 done
 
+# Root check must happen before any system operations
+if [[ ${EUID} -ne 0 ]]; then
+  echo "This installer must be run as root (try: sudo ./scripts/install.sh ...)" >&2
+  exit 1
+fi
+
 ## Note: Build and install steps are executed later after argument parsing and root checks.
 
 # Backup and snapshot management for rollback capability
@@ -144,16 +150,18 @@ if command -v gdbus >/dev/null 2>&1 && command -v nmcli >/dev/null 2>&1; then
     grep -o "'[^']*'" | tr -d "'" | tr '\n' ',' | sed 's/,$//')
 
   if [[ -n "${DEVICE_PATHS}" ]]; then
-    CHECKPOINT_PATH=$(gdbus call --system --dest org.freedesktop.NetworkManager \
+    echo "Attempting checkpoint creation with 30s timeout..."
+    CHECKPOINT_PATH=$(timeout 30 gdbus call --system --dest org.freedesktop.NetworkManager \
       --object-path /org/freedesktop/NetworkManager \
       --method org.freedesktop.NetworkManager.CheckpointCreate \
-      "[$DEVICE_PATHS]" 600 2>/dev/null | grep -o "'[^']*'" | tr -d "'" | head -1) # Increased timeout to 10 minutes
+      "[$DEVICE_PATHS]" 30 2>/dev/null | grep -o "'[^']*'" | tr -d "'" | head -1)
 
     if [[ -n "${CHECKPOINT_PATH}" ]]; then
       echo "✅ Checkpoint created: ${CHECKPOINT_PATH} (30s timeout)"
       echo "${CHECKPOINT_PATH}" > "${BACKUP_DIR}/nm_checkpoint"
     else
-      echo "⚠️  Failed to create NetworkManager checkpoint"
+      echo "⚠️  Checkpoint creation failed or timed out - proceeding without checkpoint"
+      echo "⚠️  This is safe but rollback capability will be limited"
     fi
   else
     echo "⚠️  No NetworkManager devices found for checkpoint"
@@ -165,81 +173,7 @@ fi
 echo "🔄 Phase 2: Connectivity-preserving cleanup"
 echo "==========================================="
 
-# ============================================================================
-# ATOMIC HANDOVER PREPARATION - BEFORE ANY DISRUPTIVE OPERATIONS
-# ============================================================================
-
-echo "🔍 Phase 1: Pre-installation introspection and atomic handover preparation"
-echo "=========================================================================="
-
-# 1. Comprehensive NetworkManager introspection BEFORE cleanup
-if command -v nmcli >/dev/null 2>&1; then
-  echo "Performing pre-installation NetworkManager introspection..."
-
-  # Get current NetworkManager state
-  NM_VERSION=$(nmcli --version 2>/dev/null | head -1 || echo "Unknown")
-  NM_STATE=$(nmcli -t -f STATE general 2>/dev/null || echo "Unknown")
-  NM_CONNECTIVITY=$(nmcli -t -f CONNECTIVITY general 2>/dev/null || echo "Unknown")
-
-  echo "NetworkManager Version: ${NM_VERSION}"
-  echo "NetworkManager State: ${NM_STATE}"
-  echo "Connectivity: ${NM_CONNECTIVITY}"
-
-  # Get active connections before cleanup
-  ACTIVE_CONNECTIONS=$(nmcli -t -f NAME,UUID,TYPE,STATE connection show --active 2>/dev/null | wc -l)
-  echo "Active Connections: ${ACTIVE_CONNECTIONS}"
-
-  # Get all connections before cleanup
-  ALL_CONNECTIONS=$(nmcli -t -f NAME connection show 2>/dev/null | wc -l)
-  echo "Total Connections: ${ALL_CONNECTIONS}"
-
-  # Get devices before cleanup
-  DEVICES=$(nmcli -t device status 2>/dev/null | wc -l)
-  echo "Network Devices: ${DEVICES}"
-
-  # Store current state for rollback capability
-  echo "Storing current network state for atomic rollback..."
-  nmcli -t -f NAME,UUID,TYPE,STATE connection show > "${BACKUP_DIR}/pre-cleanup-connections.list" 2>/dev/null || true
-  nmcli -t device status > "${BACKUP_DIR}/pre-cleanup-devices.list" 2>/dev/null || true
-  nmcli general > "${BACKUP_DIR}/pre-cleanup-general.list" 2>/dev/null || true
-
-  echo "✅ Pre-installation state captured for rollback"
-else
-  echo "⚠️  NetworkManager not available for introspection"
-fi
-
-# 2. Create NetworkManager checkpoint for atomic rollback
-CHECKPOINT_PATH=""
-if command -v gdbus >/dev/null 2>&1 && command -v nmcli >/dev/null 2>&1; then
-  echo "Creating NetworkManager checkpoint for atomic handover..."
-
-  # Get all device paths for checkpoint (be more conservative)
-  DEVICE_PATHS=$(gdbus call --system --dest org.freedesktop.NetworkManager \
-    --object-path /org/freedesktop/NetworkManager \
-    --method org.freedesktop.NetworkManager.GetDevices 2>/dev/null | \
-    grep -o "'[^']*'" | tr -d "'" | tr '\n' ',' | sed 's/,$//')
-
-  if [[ -n "${DEVICE_PATHS}" ]]; then
-    CHECKPOINT_PATH=$(gdbus call --system --dest org.freedesktop.NetworkManager \
-      --object-path /org/freedesktop/NetworkManager \
-      --method org.freedesktop.NetworkManager.CheckpointCreate \
-      "[$DEVICE_PATHS]" 600 2>/dev/null | grep -o "'[^']*'" | tr -d "'" | head -1) # Increased timeout to 10 minutes
-
-    if [[ -n "${CHECKPOINT_PATH}" ]]; then
-      echo "✅ Checkpoint created: ${CHECKPOINT_PATH} (10 minute timeout)"
-      echo "${CHECKPOINT_PATH}" > "${BACKUP_DIR}/nm_checkpoint"
-    else
-      echo "⚠️  Failed to create NetworkManager checkpoint"
-    fi
-  else
-    echo "⚠️  No NetworkManager devices found for checkpoint"
-  fi
-else
-  echo "⚠️  D-Bus or NetworkManager not available for checkpoint creation"
-fi
-
-echo "🔄 Phase 2: Connectivity-preserving cleanup"
-echo "==========================================="
+# Continue to cleanup phase
 
 create_backups() {
   echo "Creating system backups for rollback capability..."
@@ -927,11 +861,6 @@ else
 fi
 export PATH="$(dirname "${CARGO_BIN}"):${PATH}"
 "${CARGO_BIN}" build --release
-
-if [[ ${EUID} -ne 0 ]]; then
-  echo "This installer must be run as root (try: sudo ./scripts/install.sh ...)" >&2
-  exit 1
-fi
 
 BIN_DEST="${PREFIX}/bin/ovs-port-agent"
 CONFIG_DIR="/etc/ovs-port-agent"
