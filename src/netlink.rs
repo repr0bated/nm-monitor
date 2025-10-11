@@ -1,4 +1,4 @@
-use crate::fuse::{bind_veth_interface, ensure_fuse_mount_base, unbind_veth_interface};
+use crate::fuse::{bind_veth_interface_enhanced, ensure_fuse_mount_base, unbind_veth_interface_enhanced, InterfaceBinding};
 use crate::interfaces::update_interfaces_block;
 use crate::ledger::Ledger;
 use crate::link;
@@ -81,11 +81,10 @@ pub async fn create_container_interface(
         }),
     );
 
-    // Create FUSE bind mount for Proxmox visibility
-    // Source is the Proxmox veth identifier (pre-rename), destination is the OVS-facing interface
-    if let Err(e) = bind_veth_interface(raw_ifname, &target_name) {
+    // Create enhanced FUSE bind mount for Proxmox visibility with full API compatibility
+    if let Err(e) = bind_veth_interface_enhanced(raw_ifname, &target_name, vmid, container_id, &bridge) {
         warn!(
-            "Failed to bind Proxmox veth {} to {}: {}",
+            "Failed to create enhanced Proxmox binding {} -> {}: {}",
             raw_ifname, target_name, e
         );
     }
@@ -124,9 +123,9 @@ pub async fn remove_container_interface(
     nm_ports::remove_proactive_port(&port_name, &eth_name)
         .with_context(|| format!("remove NM connections for {interface_name}"))?;
 
-    // Remove FUSE bind mount
-    if let Err(e) = unbind_veth_interface(interface_name) {
-        warn!("Failed to unbind veth interface {}: {}", interface_name, e);
+    // Remove enhanced FUSE bind mount with full cleanup
+    if let Err(e) = unbind_veth_interface_enhanced(interface_name) {
+        warn!("Failed to unbind enhanced veth interface {}: {}", interface_name, e);
     }
 
     // Log the interface removal

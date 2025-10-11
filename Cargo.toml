@@ -26,3 +26,4 @@ rtnetlink = { version = "0.14", features = ["tokio_socket"] }
 futures = "0.3"
 futures-util = "0.3"
 tempfile = "3.0"
+hostname = "0.3"

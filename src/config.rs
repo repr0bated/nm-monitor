@@ -26,7 +26,7 @@ impl Default for Config {
             interfaces_path: "/etc/network/interfaces".to_string(),
             include_prefixes: vec!["veth".to_string(), "tap".to_string()],
             managed_block_tag: "ovs-port-agent".to_string(),
-            naming_template: "vi{container}".to_string(),
+            naming_template: "vi_{container}".to_string(),
             ledger_path: "/var/lib/ovs-port-agent/ledger.jsonl".to_string(),
             enable_rename: false,
             uplink: None,
