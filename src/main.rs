@@ -8,7 +8,8 @@ mod naming;
 mod netlink;
 mod nm_bridge;
 mod nm_config;
-mod nmcli_dyn;
+mod nm_ports;
+mod nm_query;
 mod rpc;
 
 use anyhow::Result;
@@ -153,7 +154,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::List => {
-            let names = nmcli_dyn::list_connection_names()?;
+            let names = nm_query::list_connection_names()?;
             for p in names.into_iter().filter(|n| n.starts_with("ovs-eth-")) {
                 println!("{}", p.trim_start_matches("ovs-eth-"));
             }
