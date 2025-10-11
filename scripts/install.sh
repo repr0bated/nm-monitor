@@ -334,6 +334,34 @@ CREATE_OVSBR1=0
 PURGE_BRIDGES=0
 ALLOW_OVSCTL_FORCE=0
 
+detach_uplink_if_enslaved() {
+  local uplink_dev="$1"
+  [[ -n "${uplink_dev}" ]] || return 0
+
+  if ! command -v nmcli >/dev/null 2>&1; then
+    return 0
+  fi
+
+  # Find the active connection bound to the uplink device
+  local uplink_conn
+  uplink_conn=$(nmcli -g GENERAL.CONNECTION device show "${uplink_dev}" 2>/dev/null | head -n1 || true)
+  if [[ -z "${uplink_conn}" || "${uplink_conn}" == "--" ]]; then
+    return 0
+  fi
+
+  # Check if that connection is enslaved to a master (OVS port or Linux bridge)
+  local uplink_master
+  uplink_master=$(nmcli -g connection.master connection show "${uplink_conn}" 2>/dev/null || true)
+
+  if [[ -n "${uplink_master}" && "${uplink_master}" != "--" ]]; then
+    echo "Detaching uplink ${uplink_dev} from master ${uplink_master} to preserve connectivity..."
+    nmcli connection modify "${uplink_conn}" connection.master "" 2>/dev/null || true
+    nmcli connection up "${uplink_conn}" >/dev/null 2>&1 || true
+    # Brief pause to allow DHCP re-acquire if needed
+    sleep 1
+  fi
+}
+
 cleanup_all_networking() {
   local uplink="$1"
 
@@ -563,6 +591,9 @@ cleanup_all_networking() {
             "[${device_paths}]" 600 2>/dev/null | grep -o "'[^']*'" | tr -d "'" | head -1)
         fi
       fi
+
+      # If uplink is provided, ensure it is detached from any bridge before purge
+      detach_uplink_if_enslaved "${uplink}"
 
       # First, try to delete via NetworkManager profiles so NM tears down cleanly
       if command -v nmcli >/dev/null 2>&1; then
