@@ -170,4 +170,3 @@ fn is_connection_active(name: &str) -> Result<bool> {
     }
     Ok(false)
 }
-
