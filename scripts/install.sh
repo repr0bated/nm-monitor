@@ -151,10 +151,14 @@ if command -v gdbus >/dev/null 2>&1 && command -v nmcli >/dev/null 2>&1; then
 
   if [[ -n "${DEVICE_PATHS}" ]]; then
     echo "Attempting checkpoint creation with 30s timeout..."
-    CHECKPOINT_PATH=$(timeout 30 gdbus call --system --dest org.freedesktop.NetworkManager \
+    CHECKPOINT_PATH=""
+    if timeout 30 gdbus call --system --dest org.freedesktop.NetworkManager \
       --object-path /org/freedesktop/NetworkManager \
       --method org.freedesktop.NetworkManager.CheckpointCreate \
-      "[$DEVICE_PATHS]" 30 2>/dev/null | grep -o "'[^']*'" | tr -d "'" | head -1)
+      "[$DEVICE_PATHS]" 30 >/tmp/checkpoint_result 2>/dev/null; then
+      CHECKPOINT_PATH=$(grep -o "'[^']*'" /tmp/checkpoint_result 2>/dev/null | tr -d "'" | head -1 || true)
+      rm -f /tmp/checkpoint_result 2>/dev/null || true
+    fi
 
     if [[ -n "${CHECKPOINT_PATH}" ]]; then
       echo "✅ Checkpoint created: ${CHECKPOINT_PATH} (30s timeout)"
