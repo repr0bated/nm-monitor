@@ -625,6 +625,7 @@ cleanup_all_networking() {
     else
       echo "No OVS bridges found - nothing to clean up"
     fi
+    fi
   fi
 
   # 4. Connectivity-preserving /etc/network/interfaces cleanup
