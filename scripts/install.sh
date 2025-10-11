@@ -45,6 +45,57 @@ cd "${REPO_ROOT}" || {
 
 echo "Successfully changed to repository directory: $(pwd)"
 
+# ============================================================================
+# BUILD AND INSTALL BINARY
+# ============================================================================
+
+echo "🔨 Phase 0: Building and installing binary"
+echo "-------------------------------------------"
+
+# Build release binary
+echo "Building release binary..."
+cargo build --release
+
+# Install binary
+echo "Installing binary..."
+BIN_DEST="${PREFIX}/bin/ovs-port-agent"
+install -d -m 0755 "${PREFIX}/bin"
+install -m 0755 target/release/ovs-port-agent "${BIN_DEST}"
+
+# Install configuration
+echo "Installing configuration..."
+CONFIG_DIR="/etc/ovs-port-agent"
+CONFIG_FILE="${CONFIG_DIR}/config.toml"
+install -d -m 0755 "${CONFIG_DIR}"
+if [[ ! -f "${CONFIG_FILE}" ]]; then
+  install -m 0644 config/config.toml.example "${CONFIG_FILE}"
+fi
+
+# Update bridge_name in config
+python3 - <<PY
+import pathlib, re
+cfg_path = pathlib.Path("${CONFIG_FILE}")
+text = cfg_path.read_text()
+pattern = re.compile(r'^bridge_name\s*=\s*".*"', re.MULTILINE)
+replacement = 'bridge_name = "${BRIDGE}"'
+if pattern.search(text):
+    text = pattern.sub(replacement, text, count=1)
+else:
+    text = replacement + "\n" + text
+cfg_path.write_text(text)
+PY
+
+# Install systemd service and D-Bus policy
+echo "Installing systemd service and D-Bus policy..."
+SYSTEMD_UNIT="/etc/systemd/system/ovs-port-agent.service"
+DBUS_POLICY="/etc/dbus-1/system.d/dev.ovs.PortAgent1.conf"
+install -m 0644 dbus/dev.ovs.PortAgent1.conf "${DBUS_POLICY}"
+install -m 0644 systemd/ovs-port-agent.service "${SYSTEMD_UNIT}"
+
+# Reload systemd
+echo "Reloading systemd..."
+systemctl daemon-reload
+
 # Backup and snapshot management for rollback capability
 BACKUP_DIR="/var/lib/ovs-port-agent/backups"
 SNAPSHOT_NAME="ovs-port-agent-preinstall"
