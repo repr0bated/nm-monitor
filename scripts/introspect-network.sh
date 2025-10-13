@@ -8,14 +8,14 @@ echo " Network Introspection"
 echo "=========================================="
 echo ""
 
-# Find primary interface (first non-lo, non-ovs with IP)
-# Prefer physical/wifi interfaces over OVS bridges
-PRIMARY_IFACE=$(ip -o -4 addr show | grep -v "lo" | grep -v "ovsbr" | grep -v "docker" | head -1 | awk '{print $2}')
+# Find primary interface (first non-lo, non-ovs, non-docker with IP)
+# Prefer physical/wifi interfaces over bridges
+PRIMARY_IFACE=$(ip -o -4 addr show | grep -v "lo" | grep -v "ovsbr" | grep -v "docker" | grep -v "br-" | grep -v "veth" | head -1 | awk '{print $2}')
 
 # Fallback to any interface with IP if no physical found
 if [[ -z "${PRIMARY_IFACE}" ]]; then
   echo "No physical interface found, checking all interfaces..."
-  PRIMARY_IFACE=$(ip -o -4 addr show | grep -v "^1:" | grep -v "lo" | head -1 | awk '{print $2}')
+  PRIMARY_IFACE=$(ip -o -4 addr show | grep -v "^1:" | grep -v "lo" | grep -v "docker" | grep -v "br-" | grep -v "veth" | head -1 | awk '{print $2}')
 fi
 
 if [[ -z "${PRIMARY_IFACE}" ]]; then
