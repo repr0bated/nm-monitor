@@ -39,7 +39,7 @@ echo "Physical interfaces (after filtering):"
 ip -o -4 addr show | awk '$2 !~ /^(lo|ovsbr|docker|br-|veth)/ {print $2}' | head -5
 echo ""
 
-PRIMARY_IFACE=$(ip -o -4 addr show | grep -v "lo" | grep -v "ovsbr" | grep -v "docker" | grep -v "br-" | grep -v "veth" | head -1 | awk '{print $2}' || echo "")
+PRIMARY_IFACE=$(ip -o -4 addr show | awk '$2 !~ /^(lo|ovsbr|docker|br-|veth)/ {print $2}' | head -1)
 
 if [[ -n "${PRIMARY_IFACE}" ]]; then
     echo -e "${GREEN}✓${NC} Primary interface detected: ${PRIMARY_IFACE}"
