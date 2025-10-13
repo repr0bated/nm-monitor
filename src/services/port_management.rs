@@ -24,7 +24,7 @@ impl PortManagementService {
     /// List all ports on the bridge
     pub fn list_ports(&self) -> Result<Vec<String>> {
         debug!("Listing ports on bridge '{}'", self.bridge);
-        
+
         nm_query::list_connection_names()
             .map(|v| {
                 v.into_iter()
@@ -51,7 +51,10 @@ impl PortManagementService {
             .await
             .with_context(|| format!("Failed to create container interface '{}'", name))?;
 
-        info!("Successfully added port '{}' to bridge '{}'", name, self.bridge);
+        info!(
+            "Successfully added port '{}' to bridge '{}'",
+            name, self.bridge
+        );
         Ok(format!("Container interface created for {}", name))
     }
 
@@ -72,7 +75,10 @@ impl PortManagementService {
         .await
         .with_context(|| format!("Failed to remove container interface '{}'", name))?;
 
-        info!("Successfully removed port '{}' from bridge '{}'", name, self.bridge);
+        info!(
+            "Successfully removed port '{}' from bridge '{}'",
+            name, self.bridge
+        );
         Ok(format!("Container interface {} removed", name))
     }
 }

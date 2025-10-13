@@ -56,10 +56,11 @@ impl StateManager {
     /// Load desired state from YAML/JSON file
     pub async fn load_desired_state(&self, path: &Path) -> Result<DesiredState> {
         let content = tokio::fs::read_to_string(path).await?;
-        
+
         // Try YAML first, fall back to JSON
-        if path.extension().and_then(|s| s.to_str()) == Some("yaml") 
-            || path.extension().and_then(|s| s.to_str()) == Some("yml") {
+        if path.extension().and_then(|s| s.to_str()) == Some("yaml")
+            || path.extension().and_then(|s| s.to_str()) == Some("yml")
+        {
             Ok(serde_yaml::from_str(&content)?)
         } else {
             Ok(serde_json::from_str(&content)?)
@@ -89,7 +90,7 @@ impl StateManager {
     /// Query state from a specific plugin
     pub async fn query_plugin_state(&self, plugin_name: &str) -> Result<Value> {
         let plugins = self.plugins.read().await;
-        
+
         match plugins.get(plugin_name) {
             Some(plugin) => plugin.query_current_state().await,
             None => Err(anyhow!("Plugin not found: {}", plugin_name)),
@@ -105,7 +106,7 @@ impl StateManager {
             if let Some(plugin) = plugins.get(plugin_name) {
                 let current_state = plugin.query_current_state().await?;
                 let diff = plugin.calculate_diff(&current_state, desired_state).await?;
-                
+
                 // Only include diffs that have actual actions
                 if !diff.actions.is_empty() {
                     diffs.push(diff);
@@ -186,7 +187,7 @@ impl StateManager {
             match plugin.apply_state(&diff).await {
                 Ok(result) => {
                     log::info!("Applied state for plugin: {}", diff.plugin);
-                    
+
                     // Log to blockchain ledger
                     if let Ok(mut ledger) = self.ledger.try_lock() {
                         if let Err(e) = ledger.append(
@@ -199,11 +200,15 @@ impl StateManager {
                             log::error!("Failed to log to ledger: {}", e);
                         }
                     }
-                    
+
                     results.push(result);
                 }
                 Err(e) => {
-                    log::error!("State apply failed for {}: {}, rolling back", diff.plugin, e);
+                    log::error!(
+                        "State apply failed for {}: {}, rolling back",
+                        diff.plugin,
+                        e
+                    );
                     self.rollback_all(&checkpoints).await?;
                     return Err(e);
                 }
@@ -231,9 +236,9 @@ impl StateManager {
     /// Rollback all plugins to checkpoints
     async fn rollback_all(&self, checkpoints: &[(String, Checkpoint)]) -> Result<()> {
         let plugins = self.plugins.read().await;
-        
+
         log::warn!("Rolling back {} plugins", checkpoints.len());
-        
+
         // Rollback in reverse order
         for (plugin_name, checkpoint) in checkpoints.iter().rev() {
             if let Some(plugin) = plugins.get(plugin_name) {
@@ -256,7 +261,7 @@ impl StateManager {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -265,4 +270,3 @@ impl StateManager {
         self.calculate_all_diffs(&desired).await
     }
 }
-

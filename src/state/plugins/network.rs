@@ -92,8 +92,7 @@ impl NetworkStatePlugin {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let interfaces: Vec<Value> = serde_json::from_str(&stdout)
-            .unwrap_or_else(|_| Vec::new());
+        let interfaces: Vec<Value> = serde_json::from_str(&stdout).unwrap_or_else(|_| Vec::new());
 
         let mut network_interfaces = Vec::new();
 
@@ -362,7 +361,11 @@ impl StatePlugin for NetworkStatePlugin {
 
         for action in &diff.actions {
             match action {
-                StateAction::Create { resource, config } | StateAction::Modify { resource, changes: config } => {
+                StateAction::Create { resource, config }
+                | StateAction::Modify {
+                    resource,
+                    changes: config,
+                } => {
                     let iface_config: InterfaceConfig = serde_json::from_value(config.clone())?;
 
                     match self.write_config_files(&iface_config).await {
@@ -434,8 +437,7 @@ impl StatePlugin for NetworkStatePlugin {
     }
 
     async fn rollback(&self, checkpoint: &Checkpoint) -> Result<()> {
-        let old_config: NetworkConfig =
-            serde_json::from_value(checkpoint.state_snapshot.clone())?;
+        let old_config: NetworkConfig = serde_json::from_value(checkpoint.state_snapshot.clone())?;
 
         // Restore old configuration
         for iface in &old_config.interfaces {
@@ -462,4 +464,3 @@ impl Default for NetworkStatePlugin {
         Self::new()
     }
 }
-

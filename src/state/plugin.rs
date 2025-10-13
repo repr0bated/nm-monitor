@@ -90,4 +90,3 @@ pub struct PluginCapabilities {
     pub supports_verification: bool,
     pub atomic_operations: bool,
 }
-

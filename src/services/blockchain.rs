@@ -46,16 +46,12 @@ impl BlockchainService {
     }
 
     /// Get blocks by height range
-    pub fn get_blocks_by_height(
-        &self,
-        start: u64,
-        end: u64,
-    ) -> Result<Vec<crate::ledger::Block>> {
+    pub fn get_blocks_by_height(&self, start: u64, end: u64) -> Result<Vec<crate::ledger::Block>> {
         debug!(
             "Getting blocks from height {} to {} from {:?}",
             start, end, self.ledger_path
         );
-        
+
         if start > end {
             anyhow::bail!("Invalid height range: start ({}) > end ({})", start, end);
         }
@@ -88,19 +84,20 @@ impl BlockchainService {
         let mut ledger = BlockchainLedger::new(self.ledger_path.clone())
             .with_context(|| format!("Failed to open ledger at {:?}", self.ledger_path))?;
 
-        ledger
-            .add_data(category, action, data)
-            .with_context(|| {
-                format!(
-                    "Failed to add data to blockchain: category='{}', action='{}'",
-                    category, action
-                )
-            })
+        ledger.add_data(category, action, data).with_context(|| {
+            format!(
+                "Failed to add data to blockchain: category='{}', action='{}'",
+                category, action
+            )
+        })
     }
 
     /// Get specific block by hash
     pub fn get_block_by_hash(&self, hash: &str) -> Result<Option<crate::ledger::Block>> {
-        debug!("Getting block with hash '{}' from {:?}", hash, self.ledger_path);
+        debug!(
+            "Getting block with hash '{}' from {:?}",
+            hash, self.ledger_path
+        );
         let ledger = BlockchainLedger::new(self.ledger_path.clone())
             .with_context(|| format!("Failed to open ledger at {:?}", self.ledger_path))?;
 
@@ -161,6 +158,9 @@ mod tests {
 
         let result = service.get_blocks_by_height(10, 5);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Invalid height range"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid height range"));
     }
 }

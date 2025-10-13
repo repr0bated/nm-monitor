@@ -10,7 +10,9 @@ use zbus::fdo::IntrospectableProxy;
 
 use crate::fuse;
 use crate::ovs_flows::OvsFlowManager;
-use crate::services::{BlockchainService, BridgeService, NetworkStateService, PortManagementService};
+use crate::services::{
+    BlockchainService, BridgeService, NetworkStateService, PortManagementService,
+};
 use crate::state::manager::StateManager;
 use std::sync::Arc;
 
@@ -74,9 +76,7 @@ impl PortAgent {
         info!("D-Bus call: add_port({})", name);
         tokio::runtime::Handle::current()
             .block_on(async { self.port_service.add_port(name).await })
-            .map_err(|e| {
-                zbus::fdo::Error::Failed(format!("Failed to add port '{}': {}", name, e))
-            })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Failed to add port '{}': {}", name, e)))
     }
 
     /// Remove a port from the bridge
@@ -96,10 +96,9 @@ impl PortAgent {
     /// Get blockchain ledger statistics
     fn get_blockchain_stats(&self) -> zbus::fdo::Result<String> {
         debug!("D-Bus call: get_blockchain_stats");
-        let stats = self
-            .blockchain_service
-            .get_stats()
-            .map_err(|e| zbus::fdo::Error::Failed(format!("Failed to get blockchain stats: {}", e)))?;
+        let stats = self.blockchain_service.get_stats().map_err(|e| {
+            zbus::fdo::Error::Failed(format!("Failed to get blockchain stats: {}", e))
+        })?;
 
         Ok(serde_json::to_string_pretty(&stats)
             .unwrap_or_else(|_| "Failed to serialize blockchain stats".to_string()))
@@ -145,9 +144,7 @@ impl PortAgent {
         let is_valid = self
             .blockchain_service
             .verify_chain()
-            .map_err(|e| {
-                zbus::fdo::Error::Failed(format!("Failed to verify blockchain: {}", e))
-            })?;
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Failed to verify blockchain: {}", e)))?;
 
         Ok(if is_valid {
             "Blockchain integrity: VALID".to_string()
@@ -224,9 +221,7 @@ impl PortAgent {
         let service = BridgeService::new(bridge);
         let validation = tokio::runtime::Handle::current()
             .block_on(async { service.validate_connectivity().await })
-            .map_err(|e| {
-                zbus::fdo::Error::Failed(format!("Bridge validation failed: {}", e))
-            })?;
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Bridge validation failed: {}", e)))?;
 
         Ok(serde_json::to_string_pretty(&validation)
             .unwrap_or_else(|_| "Failed to serialize validation results".to_string()))
@@ -234,7 +229,10 @@ impl PortAgent {
 
     /// Perform atomic bridge operation with enhanced safety
     fn atomic_bridge_operation(&self, bridge: &str, operation: &str) -> zbus::fdo::Result<String> {
-        info!("D-Bus call: atomic_bridge_operation({}, {})", bridge, operation);
+        info!(
+            "D-Bus call: atomic_bridge_operation({}, {})",
+            bridge, operation
+        );
         let service = BridgeService::new(bridge);
         tokio::runtime::Handle::current()
             .block_on(async { service.perform_atomic_operation(operation).await })
@@ -252,9 +250,7 @@ impl PortAgent {
         debug!("D-Bus call: get_system_network_state");
         let state = tokio::runtime::Handle::current()
             .block_on(async { self.network_service.get_comprehensive_state().await })
-            .map_err(|e| {
-                zbus::fdo::Error::Failed(format!("Failed to get network state: {}", e))
-            })?;
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Failed to get network state: {}", e)))?;
 
         Ok(serde_json::to_string_pretty(&state)
             .unwrap_or_else(|_| "Failed to serialize network state".to_string()))
@@ -288,13 +284,16 @@ impl PortAgent {
     /// Apply declarative state from YAML/JSON
     fn apply_state(&self, state_yaml: &str) -> zbus::fdo::Result<String> {
         info!("D-Bus call: apply_state");
-        
-        let state_manager = self.state.state_manager.as_ref()
-            .ok_or_else(|| zbus::fdo::Error::Failed("State manager not initialized".to_string()))?;
+
+        let state_manager =
+            self.state.state_manager.as_ref().ok_or_else(|| {
+                zbus::fdo::Error::Failed("State manager not initialized".to_string())
+            })?;
 
         // Parse the desired state
-        let desired_state: crate::state::manager::DesiredState = serde_yaml::from_str(state_yaml)
-            .map_err(|e| zbus::fdo::Error::Failed(format!("Invalid YAML: {}", e)))?;
+        let desired_state: crate::state::manager::DesiredState =
+            serde_yaml::from_str(state_yaml)
+                .map_err(|e| zbus::fdo::Error::Failed(format!("Invalid YAML: {}", e)))?;
 
         // Apply the state
         let report = tokio::runtime::Handle::current()
@@ -308,14 +307,18 @@ impl PortAgent {
     /// Query current state across all plugins or a specific plugin
     fn query_state(&self, plugin: &str) -> zbus::fdo::Result<String> {
         debug!("D-Bus call: query_state({})", plugin);
-        
-        let state_manager = self.state.state_manager.as_ref()
-            .ok_or_else(|| zbus::fdo::Error::Failed("State manager not initialized".to_string()))?;
+
+        let state_manager =
+            self.state.state_manager.as_ref().ok_or_else(|| {
+                zbus::fdo::Error::Failed("State manager not initialized".to_string())
+            })?;
 
         let state = tokio::runtime::Handle::current()
             .block_on(async {
                 if plugin.is_empty() {
-                    state_manager.query_current_state().await
+                    state_manager
+                        .query_current_state()
+                        .await
                         .map(|s| serde_json::to_value(&s).unwrap_or(serde_json::Value::Null))
                 } else {
                     state_manager.query_plugin_state(plugin).await
@@ -330,9 +333,11 @@ impl PortAgent {
     /// Show diff between current and desired state
     fn show_diff(&self, desired_yaml: &str) -> zbus::fdo::Result<String> {
         debug!("D-Bus call: show_diff");
-        
-        let state_manager = self.state.state_manager.as_ref()
-            .ok_or_else(|| zbus::fdo::Error::Failed("State manager not initialized".to_string()))?;
+
+        let state_manager =
+            self.state.state_manager.as_ref().ok_or_else(|| {
+                zbus::fdo::Error::Failed("State manager not initialized".to_string())
+            })?;
 
         // Parse the desired state
         let desired_state: crate::state::manager::DesiredState = serde_yaml::from_str(desired_yaml)
@@ -412,10 +417,13 @@ impl PortAgent {
         self.state
             .flow_manager
             .setup_basic_routing(container_network, physical_interface, internal_port)
-            .map(|_| format!("Basic routing setup for container network {}", container_network))
-            .map_err(|e| {
-                zbus::fdo::Error::Failed(format!("Failed to setup basic routing: {}", e))
+            .map(|_| {
+                format!(
+                    "Basic routing setup for container network {}",
+                    container_network
+                )
             })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Failed to setup basic routing: {}", e)))
     }
 
     /// Dump current flow rules
@@ -437,7 +445,7 @@ pub async fn serve_with_state(state: AppState) -> Result<()> {
     let agent = PortAgent::new(state);
     let name = "dev.ovs.PortAgent1";
     let path = "/dev/ovs/PortAgent1";
-    
+
     let _conn = zbus::connection::Builder::system()
         .context("Failed to connect to system bus")?
         .name(name)
@@ -447,7 +455,7 @@ pub async fn serve_with_state(state: AppState) -> Result<()> {
         .build()
         .await
         .context("Failed to build D-Bus connection")?;
-    
+
     info!("D-Bus service registered: {} at {}", name, path);
     future::pending::<()>().await;
     Ok(())
@@ -459,11 +467,15 @@ pub async fn introspect_systemd_networkd() -> Result<()> {
     let conn = zbus::Connection::system()
         .await
         .context("Failed to connect to system bus")?;
-    
-    introspect_object(&conn, "org.freedesktop.network1", "/org/freedesktop/network1")
-        .await
-        .context("Failed to introspect systemd-networkd")?;
-    
+
+    introspect_object(
+        &conn,
+        "org.freedesktop.network1",
+        "/org/freedesktop/network1",
+    )
+    .await
+    .context("Failed to introspect systemd-networkd")?;
+
     Ok(())
 }
 
@@ -480,9 +492,7 @@ async fn introspect_object(
         .with_context(|| format!("Invalid D-Bus path '{}'", path))?
         .build()
         .await
-        .with_context(|| {
-            format!("Failed to create proxy for {}:{}", destination, path)
-        })?;
+        .with_context(|| format!("Failed to create proxy for {}:{}", destination, path))?;
 
     proxy
         .introspect()

@@ -146,15 +146,19 @@ async fn main() -> Result<()> {
 
             // Initialize ledger
             let ledger = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ledger::Ledger::open(std::path::PathBuf::from(cfg.ledger_path()))
-                    .map_err(|e| crate::error::Error::Internal(format!("Failed to open ledger: {}", e)))?
+                ledger::Ledger::open(std::path::PathBuf::from(cfg.ledger_path())).map_err(|e| {
+                    crate::error::Error::Internal(format!("Failed to open ledger: {}", e))
+                })?,
             ));
 
             // Initialize state manager
-            let state_manager = std::sync::Arc::new(state::manager::StateManager::new(ledger.clone()));
-            
+            let state_manager =
+                std::sync::Arc::new(state::manager::StateManager::new(ledger.clone()));
+
             // Register network plugin
-            state_manager.register_plugin(Box::new(state::plugins::NetworkStatePlugin::new())).await;
+            state_manager
+                .register_plugin(Box::new(state::plugins::NetworkStatePlugin::new()))
+                .await;
 
             // Set up RPC state for container interface creation/removal
             let rpc_state = rpc::AppState {
@@ -241,84 +245,94 @@ async fn main() -> Result<()> {
         }
         Commands::ApplyState { state_file } => {
             info!(file = ?state_file, "Applying declarative state");
-            
+
             // Initialize state manager
             let ledger = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ledger::Ledger::open(std::path::PathBuf::from(cfg.ledger_path()))
-                    .map_err(|e| crate::error::Error::Internal(format!("Failed to open ledger: {}", e)))?
+                ledger::Ledger::open(std::path::PathBuf::from(cfg.ledger_path())).map_err(|e| {
+                    crate::error::Error::Internal(format!("Failed to open ledger: {}", e))
+                })?,
             ));
             let state_manager = state::manager::StateManager::new(ledger.clone());
-            state_manager.register_plugin(Box::new(state::plugins::NetworkStatePlugin::new())).await;
+            state_manager
+                .register_plugin(Box::new(state::plugins::NetworkStatePlugin::new()))
+                .await;
 
             // Load and apply state
-            let desired_state = convert_result(
-                state_manager.load_desired_state(&state_file).await
-            )?;
-            
-            let report = convert_result(
-                state_manager.apply_state(desired_state).await
-            )?;
+            let desired_state =
+                convert_result(state_manager.load_desired_state(&state_file).await)?;
 
-            println!("{}", serde_json::to_string_pretty(&report)
-                .unwrap_or_else(|_| "Failed to serialize report".to_string()));
-            
+            let report = convert_result(state_manager.apply_state(desired_state).await)?;
+
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report)
+                    .unwrap_or_else(|_| "Failed to serialize report".to_string())
+            );
+
             if report.success {
                 info!("State applied successfully");
                 Ok(())
             } else {
-                Err(crate::error::Error::Internal("State apply failed".to_string()))
+                Err(crate::error::Error::Internal(
+                    "State apply failed".to_string(),
+                ))
             }
         }
         Commands::QueryState { plugin } => {
             info!(plugin = ?plugin, "Querying current state");
-            
+
             // Initialize state manager
             let ledger = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ledger::Ledger::open(std::path::PathBuf::from(cfg.ledger_path()))
-                    .map_err(|e| crate::error::Error::Internal(format!("Failed to open ledger: {}", e)))?
+                ledger::Ledger::open(std::path::PathBuf::from(cfg.ledger_path())).map_err(|e| {
+                    crate::error::Error::Internal(format!("Failed to open ledger: {}", e))
+                })?,
             ));
             let state_manager = state::manager::StateManager::new(ledger.clone());
-            state_manager.register_plugin(Box::new(state::plugins::NetworkStatePlugin::new())).await;
+            state_manager
+                .register_plugin(Box::new(state::plugins::NetworkStatePlugin::new()))
+                .await;
 
             // Query state
             let state = if let Some(plugin_name) = plugin {
-                convert_result(
-                    state_manager.query_plugin_state(&plugin_name).await
-                )?
+                convert_result(state_manager.query_plugin_state(&plugin_name).await)?
             } else {
-                let current = convert_result(
-                    state_manager.query_current_state().await
-                )?;
+                let current = convert_result(state_manager.query_current_state().await)?;
                 serde_json::to_value(&current)
                     .map_err(|e| crate::error::Error::Internal(e.to_string()))?
             };
 
-            println!("{}", serde_json::to_string_pretty(&state)
-                .unwrap_or_else(|_| "Failed to serialize state".to_string()));
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&state)
+                    .unwrap_or_else(|_| "Failed to serialize state".to_string())
+            );
             Ok(())
         }
         Commands::ShowDiff { state_file } => {
             info!(file = ?state_file, "Calculating state diff");
-            
+
             // Initialize state manager
             let ledger = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ledger::Ledger::open(std::path::PathBuf::from(cfg.ledger_path()))
-                    .map_err(|e| crate::error::Error::Internal(format!("Failed to open ledger: {}", e)))?
+                ledger::Ledger::open(std::path::PathBuf::from(cfg.ledger_path())).map_err(|e| {
+                    crate::error::Error::Internal(format!("Failed to open ledger: {}", e))
+                })?,
             ));
             let state_manager = state::manager::StateManager::new(ledger.clone());
-            state_manager.register_plugin(Box::new(state::plugins::NetworkStatePlugin::new())).await;
+            state_manager
+                .register_plugin(Box::new(state::plugins::NetworkStatePlugin::new()))
+                .await;
 
             // Load desired state and calculate diff
-            let desired_state = convert_result(
-                state_manager.load_desired_state(&state_file).await
-            )?;
-            
-            let diffs = convert_result(
-                state_manager.show_diff(desired_state).await
-            )?;
+            let desired_state =
+                convert_result(state_manager.load_desired_state(&state_file).await)?;
 
-            println!("{}", serde_json::to_string_pretty(&diffs)
-                .unwrap_or_else(|_| "Failed to serialize diffs".to_string()));
+            let diffs = convert_result(state_manager.show_diff(desired_state).await)?;
+
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&diffs)
+                    .unwrap_or_else(|_| "Failed to serialize diffs".to_string())
+            );
             Ok(())
         }
     }

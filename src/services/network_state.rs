@@ -58,16 +58,22 @@ impl NetworkStateService {
     pub async fn get_comprehensive_state(&self) -> Result<NetworkState> {
         debug!("Getting comprehensive network state");
 
-        let networkd = self.get_networkd_state().await
+        let networkd = self
+            .get_networkd_state()
+            .await
             .context("Failed to get networkd state")?;
-        
-        let ovs_bridges = self.get_ovs_bridge_states().await
+
+        let ovs_bridges = self
+            .get_ovs_bridge_states()
+            .await
             .context("Failed to get OVS bridge states")?;
-        
-        let interface_bindings = fuse::get_interface_bindings()
-            .context("Failed to get interface bindings")?;
-        
-        let connectivity_status = self.get_connectivity_status().await
+
+        let interface_bindings =
+            fuse::get_interface_bindings().context("Failed to get interface bindings")?;
+
+        let connectivity_status = self
+            .get_connectivity_status()
+            .await
             .context("Failed to get connectivity status")?;
 
         Ok(NetworkState {
@@ -130,7 +136,8 @@ impl NetworkStateService {
         debug!("Getting OVS bridge states");
 
         let mut bridges = Vec::new();
-        let bridge_names = command::list_bridges().await
+        let bridge_names = command::list_bridges()
+            .await
             .context("Failed to list OVS bridges")?;
 
         for bridge_name in bridge_names {
@@ -158,7 +165,9 @@ impl NetworkStateService {
             }
 
             // Check if bridge is active (has networkctl connection)
-            if let Ok(output) = command::networkctl(&["-t", "-f", "NAME,STATE", "connection", "show"]).await {
+            if let Ok(output) =
+                command::networkctl(&["-t", "-f", "NAME,STATE", "connection", "show"]).await
+            {
                 for line in output.lines() {
                     let parts: Vec<&str> = line.split(':').collect();
                     if parts.len() >= 2 && parts[0] == bridge_name {
@@ -197,7 +206,9 @@ impl NetworkStateService {
         }
 
         // Get uplink status (first non-lo interface)
-        if let Ok(output) = command::networkctl(&["-t", "-f", "DEVICE,STATE", "device", "status"]).await {
+        if let Ok(output) =
+            command::networkctl(&["-t", "-f", "DEVICE,STATE", "device", "status"]).await
+        {
             for line in output.lines() {
                 let parts: Vec<&str> = line.split(':').collect();
                 if parts.len() >= 2 && parts[0] != "lo" {
@@ -235,7 +246,7 @@ mod tests {
         // This should succeed even on systems without networkd
         // as we handle errors gracefully
         assert!(result.is_ok());
-        
+
         let state = result.unwrap();
         // Version should be set to something, even if "unknown"
         assert!(!state.version.is_empty());
@@ -246,7 +257,7 @@ mod tests {
         let service = NetworkStateService::new();
         let result = service.get_connectivity_status().await;
         assert!(result.is_ok());
-        
+
         let status = result.unwrap();
         // DNS and internet checks might fail in test environments, that's ok
         // Just verify the structure is populated

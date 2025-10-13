@@ -52,7 +52,10 @@ impl BridgeService {
         let networkd_status = command::networkctl(&["status", &self.bridge_name, "--no-pager"])
             .await
             .unwrap_or_else(|e| {
-                warn!("Failed to get networkd status for '{}': {}", self.bridge_name, e);
+                warn!(
+                    "Failed to get networkd status for '{}': {}",
+                    self.bridge_name, e
+                );
                 String::from("Status unavailable")
             });
 
@@ -92,9 +95,12 @@ impl BridgeService {
 
         // Validate bridge is active
         let bridge_active = if networkd_exists {
-            command::execute_command_checked("networkctl", &["status", &self.bridge_name, "--no-pager"])
-                .await
-                .unwrap_or(false)
+            command::execute_command_checked(
+                "networkctl",
+                &["status", &self.bridge_name, "--no-pager"],
+            )
+            .await
+            .unwrap_or(false)
         } else {
             false
         };
@@ -153,12 +159,16 @@ impl BridgeService {
 
         match operation {
             "create_checkpoint" => {
-                let checkpoint_path = self.create_networkd_backup().await
+                let checkpoint_path = self
+                    .create_networkd_backup()
+                    .await
                     .context("Failed to create networkd backup checkpoint")?;
                 Ok(format!("Checkpoint created: {}", checkpoint_path))
             }
             "validate_topology" => {
-                let is_valid = self.validate_topology().await
+                let is_valid = self
+                    .validate_topology()
+                    .await
                     .context("Failed to validate bridge topology")?;
                 Ok(format!(
                     "Topology validation: {}",
@@ -166,7 +176,9 @@ impl BridgeService {
                 ))
             }
             "sync_with_proxmox" => {
-                let result = self.synchronize_with_proxmox().await
+                let result = self
+                    .synchronize_with_proxmox()
+                    .await
                     .context("Failed to synchronize with Proxmox")?;
                 Ok(format!("Proxmox sync: {}", result))
             }
@@ -191,8 +203,8 @@ impl BridgeService {
         // Copy all .network and .netdev files
         let network_dir = Path::new("/etc/systemd/network");
         if network_dir.exists() {
-            for entry in std::fs::read_dir(network_dir)
-                .context("Failed to read /etc/systemd/network")?
+            for entry in
+                std::fs::read_dir(network_dir).context("Failed to read /etc/systemd/network")?
             {
                 let entry = entry?;
                 let path = entry.path();
@@ -200,9 +212,8 @@ impl BridgeService {
                     if ext == "network" || ext == "netdev" {
                         let file_name = path.file_name().unwrap();
                         let dest = Path::new(&backup_dir).join(file_name);
-                        std::fs::copy(&path, &dest).with_context(|| {
-                            format!("Failed to copy {:?} to {:?}", path, dest)
-                        })?;
+                        std::fs::copy(&path, &dest)
+                            .with_context(|| format!("Failed to copy {:?} to {:?}", path, dest))?;
                     }
                 }
             }
@@ -247,8 +258,8 @@ impl BridgeService {
     async fn synchronize_with_proxmox(&self) -> Result<String> {
         debug!("Synchronizing bridge '{}' with Proxmox", self.bridge_name);
 
-        let bindings = fuse::get_interface_bindings()
-            .context("Failed to get interface bindings")?;
+        let bindings =
+            fuse::get_interface_bindings().context("Failed to get interface bindings")?;
 
         let mut sync_count = 0;
         for (ovs_interface, binding) in bindings.iter() {
@@ -272,7 +283,10 @@ impl BridgeService {
             "Synchronized {} interfaces on bridge '{}' with Proxmox",
             sync_count, self.bridge_name
         );
-        Ok(format!("Synchronized {} interfaces with Proxmox", sync_count))
+        Ok(format!(
+            "Synchronized {} interfaces with Proxmox",
+            sync_count
+        ))
     }
 }
 
