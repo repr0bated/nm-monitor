@@ -351,7 +351,9 @@ impl NetworkStatePlugin {
             .context("Failed to check if bridge exists")?;
 
         if check_output.status.success() {
-            // Bridge already exists
+            // Bridge already exists, apply security settings anyway
+            log::info!("Bridge {} already exists, applying security settings", name);
+            self.apply_bridge_security(name).await?;
             return Ok(());
         }
 
@@ -368,6 +370,124 @@ impl NetworkStatePlugin {
         }
 
         log::info!("Created OVS bridge: {}", name);
+
+        // Apply security settings
+        self.apply_bridge_security(name).await?;
+
+        Ok(())
+    }
+
+    /// Apply security settings to OVS bridge
+    async fn apply_bridge_security(&self, bridge: &str) -> Result<()> {
+        log::info!("Applying security settings to bridge: {}", bridge);
+
+        // Disable STP (Spanning Tree Protocol) - prevents loops but can cause issues
+        let stp_output = AsyncCommand::new("ovs-vsctl")
+            .args(["set", "Bridge", bridge, "stp_enable=false"])
+            .output()
+            .await
+            .context("Failed to disable STP")?;
+
+        if !stp_output.status.success() {
+            let stderr = String::from_utf8_lossy(&stp_output.stderr);
+            log::warn!("Failed to disable STP on {}: {}", bridge, stderr);
+        } else {
+            log::info!("  ✓ Disabled STP on {}", bridge);
+        }
+
+        // Disable RSTP (Rapid Spanning Tree Protocol)
+        let rstp_output = AsyncCommand::new("ovs-vsctl")
+            .args(["set", "Bridge", bridge, "rstp_enable=false"])
+            .output()
+            .await
+            .context("Failed to disable RSTP")?;
+
+        if !rstp_output.status.success() {
+            let stderr = String::from_utf8_lossy(&rstp_output.stderr);
+            log::warn!("Failed to disable RSTP on {}: {}", bridge, stderr);
+        } else {
+            log::info!("  ✓ Disabled RSTP on {}", bridge);
+        }
+
+        // Enable multicast snooping (reduces broadcast storms)
+        let mcast_output = AsyncCommand::new("ovs-vsctl")
+            .args(["set", "Bridge", bridge, "mcast_snooping_enable=true"])
+            .output()
+            .await
+            .context("Failed to enable multicast snooping")?;
+
+        if !mcast_output.status.success() {
+            let stderr = String::from_utf8_lossy(&mcast_output.stderr);
+            log::warn!(
+                "Failed to enable multicast snooping on {}: {}",
+                bridge,
+                stderr
+            );
+        } else {
+            log::info!("  ✓ Enabled multicast snooping on {}", bridge);
+        }
+
+        // Set other protocols settings for security
+        let other_config = AsyncCommand::new("ovs-vsctl")
+            .args([
+                "set",
+                "Bridge",
+                bridge,
+                // Prevent MAC address table flooding
+                "other-config:mac-table-size=2048",
+                // MAC aging time (5 minutes)
+                "other-config:mac-aging-time=300",
+            ])
+            .output()
+            .await;
+
+        if let Ok(output) = other_config {
+            if output.status.success() {
+                log::info!("  ✓ Applied flood protection settings on {}", bridge);
+            }
+        }
+
+        // Add default flow rules for security (drop dangerous packets)
+        self.add_security_flows(bridge).await?;
+
+        Ok(())
+    }
+
+    /// Add security flow rules to bridge
+    async fn add_security_flows(&self, bridge: &str) -> Result<()> {
+        // Priority 100: Drop LLDP (Link Layer Discovery Protocol) packets
+        // Prevents network topology exposure
+        let _ = AsyncCommand::new("ovs-ofctl")
+            .args([
+                "add-flow",
+                bridge,
+                "priority=100,dl_type=0x88cc,actions=drop",
+            ])
+            .output()
+            .await;
+
+        // Priority 100: Drop CDP (Cisco Discovery Protocol) packets
+        let _ = AsyncCommand::new("ovs-ofctl")
+            .args([
+                "add-flow",
+                bridge,
+                "priority=100,dl_dst=01:00:0c:cc:cc:cc,actions=drop",
+            ])
+            .output()
+            .await;
+
+        // Priority 100: Drop STP BPDUs (Bridge Protocol Data Units)
+        // Prevents rogue switches from affecting topology
+        let _ = AsyncCommand::new("ovs-ofctl")
+            .args([
+                "add-flow",
+                bridge,
+                "priority=100,dl_dst=01:80:c2:00:00:00/ff:ff:ff:ff:ff:f0,actions=drop",
+            ])
+            .output()
+            .await;
+
+        log::info!("  ✓ Added security flow rules to {}", bridge);
         Ok(())
     }
 
