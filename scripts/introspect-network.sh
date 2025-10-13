@@ -3,10 +3,53 @@
 
 set -euo pipefail
 
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+# Check for help
+if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+  cat <<EOF
+Usage: $0 [output-file] [bridge-name]
+
+Introspect current network configuration and generate YAML config.
+
+Arguments:
+  output-file   Path to save generated config (default: /tmp/network-introspected-TIMESTAMP.yaml)
+  bridge-name   Name for the OVS bridge (default: vmbr0)
+
+Examples:
+  $0                                    # Use defaults
+  $0 /tmp/myconfig.yaml                 # Custom output file
+  $0 /tmp/myconfig.yaml br0             # Custom output and bridge name
+  sudo $0                               # Run with sudo for best results
+
+This script will:
+  1. Detect your primary network interface
+  2. Extract current IP configuration
+  3. Generate a YAML config for ovs-port-agent
+  4. Save it to the specified file
+
+The generated config can be used with:
+  sudo ./scripts/install-with-network-plugin.sh --network-config <generated-file> --system
+EOF
+  exit 0
+fi
+
 echo "=========================================="
 echo " Network Introspection"
 echo "=========================================="
 echo ""
+
+# Check if we might need elevated privileges
+if [[ ${EUID} -ne 0 ]]; then
+  echo -e "${YELLOW}WARNING: Not running as root${NC}"
+  echo "Some network information might be limited without sudo."
+  echo "For best results, run: sudo $0"
+  echo ""
+fi
 
 # Find primary interface (first non-lo, non-ovs, non-docker with IP)
 # Prefer physical/wifi interfaces over bridges
@@ -65,6 +108,11 @@ fi
 IS_DHCP=false
 if command -v networkctl >/dev/null 2>&1; then
   if networkctl status "${PRIMARY_IFACE}" 2>/dev/null | grep -qi "DHCP.*yes"; then
+    IS_DHCP=true
+  fi
+elif command -v nmcli >/dev/null 2>&1; then
+  # Fallback to NetworkManager if systemd-networkd not available
+  if nmcli device show "${PRIMARY_IFACE}" 2>/dev/null | grep -qi "DHCP4.*yes"; then
     IS_DHCP=true
   fi
 fi

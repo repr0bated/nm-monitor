@@ -177,9 +177,18 @@ fi
 
 if [[ -z "${CARGO_BIN}" ]]; then
   echo -e "${RED}ERROR: cargo not found${NC}" >&2
-  echo "Install Rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
   echo ""
-  echo "If you just installed Rust, run: source \$HOME/.cargo/env"
+  echo "Rust/Cargo is required to build ovs-port-agent."
+  echo ""
+  echo "To install Rust:"
+  echo "  1. As regular user (not root): curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+  echo "  2. Follow the installation prompts"
+  echo "  3. Run: source \$HOME/.cargo/env"
+  echo "  4. Then re-run this installer with sudo"
+  echo ""
+  echo "If Rust is already installed for your user, ensure it's accessible:"
+  echo "  - Check: which cargo (as your regular user)"
+  echo "  - The installer will find cargo in \$SUDO_USER's home directory"
   exit 1
 fi
 
@@ -202,6 +211,21 @@ if ! systemctl is-active --quiet openvswitch-switch 2>/dev/null; then
     echo -e "${RED}ERROR: Failed to start openvswitch-switch${NC}" >&2
     exit 1
   }
+fi
+
+# Check for Python3 and YAML support (needed for --with-ovsbr1)
+if [[ ${WITH_OVSBR1} -eq 1 ]]; then
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo -e "${RED}ERROR: python3 not found (required for --with-ovsbr1)${NC}" >&2
+    echo "Install: apt-get install python3"
+    exit 1
+  fi
+  
+  if ! python3 -c "import yaml" 2>/dev/null; then
+    echo -e "${RED}ERROR: python3-yaml not found (required for --with-ovsbr1)${NC}" >&2
+    echo "Install: apt-get install python3-yaml"
+    exit 1
+  fi
 fi
 
 echo -e "${GREEN}✓${NC} Prerequisites OK"
