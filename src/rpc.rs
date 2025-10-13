@@ -28,6 +28,7 @@ pub struct PortAgent {
     // Service instances
     port_service: PortManagementService,
     blockchain_service: BlockchainService,
+    #[allow(dead_code)]
     bridge_service: BridgeService,
     network_service: NetworkStateService,
 }

@@ -11,6 +11,7 @@ pub trait StatePlugin: Send + Sync {
     fn name(&self) -> &str;
 
     /// Plugin version for compatibility checking
+    #[allow(dead_code)]
     fn version(&self) -> &str;
 
     /// Query current system state in this domain
@@ -32,6 +33,7 @@ pub trait StatePlugin: Send + Sync {
     async fn rollback(&self, checkpoint: &Checkpoint) -> Result<()>;
 
     /// Get plugin capabilities and limitations
+    #[allow(dead_code)]
     fn capabilities(&self) -> PluginCapabilities;
 }
 
@@ -81,6 +83,7 @@ pub struct Checkpoint {
 
 /// Plugin capabilities flags
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct PluginCapabilities {
     pub supports_rollback: bool,
     pub supports_checkpoints: bool,

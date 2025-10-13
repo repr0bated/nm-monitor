@@ -66,6 +66,7 @@ pub async fn execute_with_context(
 }
 
 /// Execute NetworkManager command (nmcli)
+#[allow(dead_code)]
 pub async fn nmcli(args: &[&str]) -> Result<String> {
     execute_with_context("nmcli", args, &format!("nmcli {:?} failed", args)).await
 }

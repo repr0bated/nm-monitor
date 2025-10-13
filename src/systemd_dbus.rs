@@ -114,6 +114,7 @@ pub struct LinkInfo {
 }
 
 /// Get comprehensive network state using both D-Bus and networkctl
+#[allow(dead_code)]
 pub async fn get_comprehensive_network_state() -> Result<serde_json::Value> {
     let mut state = serde_json::Map::new();
 

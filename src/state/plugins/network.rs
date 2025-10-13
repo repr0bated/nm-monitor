@@ -145,7 +145,7 @@ impl NetworkStatePlugin {
     /// Query details for a specific interface
     async fn query_interface_details(&self, name: &str) -> Result<InterfaceConfig> {
         let output = AsyncCommand::new("ip")
-            .args(&["addr", "show", name])
+            .args(["addr", "show", name])
             .output()
             .await?;
 
@@ -337,7 +337,7 @@ impl StatePlugin for NetworkStatePlugin {
         }
 
         // Find interfaces to delete
-        for (name, _) in &current_map {
+        for name in current_map.keys() {
             if !desired_map.contains_key(name) {
                 actions.push(StateAction::Delete {
                     resource: name.clone(),
