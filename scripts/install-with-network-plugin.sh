@@ -175,11 +175,35 @@ echo ""
 # Check prerequisites
 echo "Checking prerequisites..."
 
-if ! command -v cargo >/dev/null 2>&1; then
+# Find cargo (handle sudo case where cargo is in user's home)
+CARGO_BIN=""
+if command -v cargo >/dev/null 2>&1; then
+  CARGO_BIN=$(command -v cargo)
+else
+  # When running under sudo, check the real user's cargo
+  if [[ -n "${SUDO_USER:-}" ]]; then
+    SUDO_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+    if [[ -n "$SUDO_HOME" && -x "$SUDO_HOME/.cargo/bin/cargo" ]]; then
+      CARGO_BIN="$SUDO_HOME/.cargo/bin/cargo"
+      echo "Found cargo in $SUDO_USER's home: $CARGO_BIN"
+    fi
+  fi
+  
+  # Last resort: check current user's home
+  if [[ -z "${CARGO_BIN}" && -x "$HOME/.cargo/bin/cargo" ]]; then
+    CARGO_BIN="$HOME/.cargo/bin/cargo"
+  fi
+fi
+
+if [[ -z "${CARGO_BIN}" ]]; then
   echo -e "${RED}ERROR: cargo not found${NC}" >&2
   echo "Install Rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+  echo ""
+  echo "If you just installed Rust, run: source \$HOME/.cargo/env"
   exit 1
 fi
+
+echo "Using cargo: ${CARGO_BIN}"
 
 if ! command -v ovs-vsctl >/dev/null 2>&1; then
   echo -e "${YELLOW}WARNING: openvswitch-switch not installed${NC}"
@@ -210,7 +234,11 @@ echo "=========================================="
 echo ""
 
 cd "${REPO_ROOT}"
-cargo build --release
+
+# Ensure cargo is in PATH
+export PATH="$(dirname "${CARGO_BIN}"):${PATH}"
+
+"${CARGO_BIN}" build --release
 
 echo ""
 echo -e "${GREEN}✓${NC} Build complete"

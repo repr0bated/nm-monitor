@@ -8,10 +8,30 @@ echo " Network Introspection"
 echo "=========================================="
 echo ""
 
-# Find primary interface (first non-lo with IP)
-PRIMARY_IFACE=$(ip -o -4 addr show | grep -v "lo" | head -1 | awk '{print $2}')
+# Find primary interface (first non-lo, non-ovs with IP)
+# Prefer physical/wifi interfaces over OVS bridges
+PRIMARY_IFACE=$(ip -o -4 addr show | grep -v "lo" | grep -v "ovsbr" | grep -v "docker" | head -1 | awk '{print $2}')
+
+# Fallback to any interface with IP if no physical found
 if [[ -z "${PRIMARY_IFACE}" ]]; then
+  echo "No physical interface found, checking all interfaces..."
+  PRIMARY_IFACE=$(ip -o -4 addr show | grep -v "^1:" | grep -v "lo" | head -1 | awk '{print $2}')
+fi
+
+if [[ -z "${PRIMARY_IFACE}" ]]; then
+  echo ""
   echo "ERROR: Could not detect primary interface" >&2
+  echo ""
+  echo "Available interfaces:"
+  ip -brief addr show | grep -v "lo"
+  echo ""
+  echo "This might mean:"
+  echo "  1. Network already configured with OVS bridges"
+  echo "  2. No active network interface found"
+  echo ""
+  echo "Solutions:"
+  echo "  - Use existing config: --network-config FILE"
+  echo "  - Manually create config based on: ip addr show"
   exit 1
 fi
 
