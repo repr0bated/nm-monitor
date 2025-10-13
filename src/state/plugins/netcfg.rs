@@ -134,7 +134,7 @@ impl NetcfgStatePlugin {
                 if line.contains("NXST_FLOW") || line.starts_with("cookie=") {
                     // Parse flow rules
                     // Example: "priority=200,ip,nw_dst=10.0.0.0/8 actions=output:1"
-                    if line.find("priority=").is_some() {
+                    if line.contains("priority=") {
                         // This is a simplified parser - full implementation would be more robust
                         flows.push(OvsFlowConfig {
                             bridge: bridge.to_string(),
@@ -409,38 +409,35 @@ impl StatePlugin for NetcfgStatePlugin {
         let mut results = Vec::new();
 
         for action in &diff.actions {
-            match action {
-                StateAction::Modify { resource, changes } => {
-                    match resource.as_str() {
-                        "routing" => {
-                            if let Some(routes) = changes.get("new") {
-                                let routes: Vec<RouteConfig> = serde_json::from_value(
-                                    routes.clone(),
-                                )?;
-                                self.apply_routes(&routes).await?;
-                                results.push(format!("Applied {} routes", routes.len()));
-                            }
+            if let StateAction::Modify { resource, changes } = action {
+                match resource.as_str() {
+                    "routing" => {
+                        if let Some(routes) = changes.get("new") {
+                            let routes: Vec<RouteConfig> = serde_json::from_value(
+                                routes.clone(),
+                            )?;
+                            self.apply_routes(&routes).await?;
+                            results.push(format!("Applied {} routes", routes.len()));
                         }
-                        "ovs_flows" => {
-                            if let Some(flows) = changes.get("new") {
-                                let flows: Vec<OvsFlowConfig> = serde_json::from_value(
-                                    flows.clone(),
-                                )?;
-                                self.apply_ovs_flows(&flows).await?;
-                                results.push(format!("Applied {} OVS flows", flows.len()));
-                            }
-                        }
-                        "dns" => {
-                            if let Some(dns_value) = changes.get("new") {
-                                let dns: DnsConfig = serde_json::from_value(dns_value.clone())?;
-                                self.apply_dns(&dns).await?;
-                                results.push("Applied DNS configuration".to_string());
-                            }
-                        }
-                        _ => {}
                     }
+                    "ovs_flows" => {
+                        if let Some(flows) = changes.get("new") {
+                            let flows: Vec<OvsFlowConfig> = serde_json::from_value(
+                                flows.clone(),
+                            )?;
+                            self.apply_ovs_flows(&flows).await?;
+                            results.push(format!("Applied {} OVS flows", flows.len()));
+                        }
+                    }
+                    "dns" => {
+                        if let Some(dns_value) = changes.get("new") {
+                            let dns: DnsConfig = serde_json::from_value(dns_value.clone())?;
+                            self.apply_dns(&dns).await?;
+                            results.push("Applied DNS configuration".to_string());
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
 

@@ -234,9 +234,9 @@ mod tests {
 
     #[test]
     fn test_network_state_service_creation() {
-        let service = NetworkStateService::new();
+        let _service = NetworkStateService::new();
         // Service is a zero-sized type, just verify it compiles
-        drop(service);
+        // Service goes out of scope here naturally
     }
 
     #[tokio::test]
