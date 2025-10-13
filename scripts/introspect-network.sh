@@ -72,6 +72,21 @@ fi
 echo "  Using DHCP: ${IS_DHCP}"
 echo ""
 
+# Capture ALL hardware properties
+MAC_ADDRESS=$(ip link show "${PRIMARY_IFACE}" | grep -oP 'link/ether \K[^ ]+' | head -1)
+MTU=$(ip link show "${PRIMARY_IFACE}" | grep -oP 'mtu \K[0-9]+')
+OPERSTATE=$(cat "/sys/class/net/${PRIMARY_IFACE}/operstate" 2>/dev/null || echo "unknown")
+SPEED=$(cat "/sys/class/net/${PRIMARY_IFACE}/speed" 2>/dev/null || echo "unknown")
+DUPLEX=$(cat "/sys/class/net/${PRIMARY_IFACE}/duplex" 2>/dev/null || echo "unknown")
+TXQUEUELEN=$(ip link show "${PRIMARY_IFACE}" | grep -oP 'qlen \K[0-9]+' || echo "1000")
+
+echo "Hardware Properties:"
+echo "  MAC: ${MAC_ADDRESS}"
+echo "  MTU: ${MTU}"
+echo "  Speed: ${SPEED}"
+echo "  Duplex: ${DUPLEX}"
+echo ""
+
 # Determine bridge name
 BRIDGE_NAME="ovsbr0"
 echo "Target Bridge: ${BRIDGE_NAME}"

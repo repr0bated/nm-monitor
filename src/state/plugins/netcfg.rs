@@ -30,6 +30,10 @@ pub struct RouteConfig {
     pub interface: Option<String>, // e.g., "ovsbr0"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metric: Option<u32>,
+    
+    /// Dynamic properties for advanced routing options
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub properties: Option<HashMap<String, Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -38,6 +42,10 @@ pub struct OvsFlowConfig {
     pub priority: u32,
     pub match_rule: String, // OpenFlow match, e.g., "ip,nw_dst=10.0.0.0/8"
     pub actions: String,    // OpenFlow actions, e.g., "output:1"
+    
+    /// Dynamic properties for advanced flow options
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub properties: Option<HashMap<String, Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -46,6 +54,10 @@ pub struct DnsConfig {
     pub search_domains: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hostname: Option<String>,
+    
+    /// Dynamic properties for DNS options
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub properties: Option<HashMap<String, Value>>,
 }
 
 /// Netcfg state plugin implementation
@@ -81,6 +93,7 @@ impl NetcfgStatePlugin {
                     gateway: parts[2].to_string(),
                     interface: parts.get(4).map(|s| s.to_string()),
                     metric: None,
+                    properties: None,
                 });
             }
         }
@@ -128,6 +141,7 @@ impl NetcfgStatePlugin {
                             priority: 0, // Would parse from line
                             match_rule: String::new(),
                             actions: String::new(),
+                            properties: None,
                         });
                     }
                 }
@@ -173,6 +187,7 @@ impl NetcfgStatePlugin {
         Ok(DnsConfig {
             search_domains,
             hostname,
+            properties: None,
         })
     }
 

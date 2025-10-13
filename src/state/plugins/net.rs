@@ -29,6 +29,19 @@ pub struct InterfaceConfig {
     pub ipv6: Option<Ipv6Config>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub controller: Option<String>,
+    
+    /// Dynamic properties - introspection captures ALL hardware properties here
+    /// Examples: mtu, mac_addresses (array), speed, duplex, txqueuelen, etc.
+    /// 
+    /// APPEND-ONLY: Field names are permanent once added (by introspection or user)
+    /// Values are mutable (ledger tracks all changes)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub properties: Option<HashMap<String, Value>>,
+    
+    /// Property schema - tracks which fields exist (append-only set)
+    /// Used for validation: new fields can be added, existing fields cannot be removed
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub property_schema: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -98,6 +111,25 @@ impl NetStatePlugin {
                 "Interface name '{}' contains invalid characters",
                 config.name
             ));
+        }
+        
+        // Validate property schema: if schema exists, all fields must be present
+        if let Some(ref schema) = config.property_schema {
+            if let Some(ref properties) = config.properties {
+                // Check that all schema fields exist in properties
+                for field in schema {
+                    if !properties.contains_key(field) {
+                        return Err(anyhow!(
+                            "Property '{}' declared in schema but missing from properties (append-only violation)",
+                            field
+                        ));
+                    }
+                }
+            } else if !schema.is_empty() {
+                return Err(anyhow!(
+                    "Property schema exists but properties map is missing"
+                ));
+            }
         }
 
         // Validate OVS bridge configuration
@@ -291,6 +323,8 @@ impl NetStatePlugin {
             ipv4,
             ipv6: None,
             controller: None,
+            properties: None,
+            property_schema: None,
         })
     }
 
