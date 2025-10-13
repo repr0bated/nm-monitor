@@ -32,6 +32,8 @@ ENABLE_SERVICE=0
 PREFIX="/usr/local"
 WITH_OVSBR1=0
 INTROSPECT=0
+BRIDGE0_NAME="vmbr0"  # Default name for primary bridge
+BRIDGE1_NAME="docker-bridge"  # Default name for Docker bridge
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
