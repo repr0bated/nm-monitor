@@ -33,6 +33,7 @@ plugins:
       # Secondary bridge for Docker/Netmaker
       - name: ovsbr1  
         type: ovs-bridge
+        ports: []  # No physical ports, isolated bridge
         ipv4:
           enabled: true
           dhcp: false
