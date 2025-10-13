@@ -77,6 +77,97 @@ impl NetworkStatePlugin {
         }
     }
 
+    /// Validate interface configuration
+    fn validate_interface_config(&self, config: &InterfaceConfig) -> Result<()> {
+        // Validate interface name (max 15 chars for Linux)
+        if config.name.len() > 15 {
+            return Err(anyhow!(
+                "Interface name '{}' exceeds 15 character limit",
+                config.name
+            ));
+        }
+
+        // Validate interface name characters (alphanumeric, dash, underscore)
+        if !config
+            .name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(anyhow!(
+                "Interface name '{}' contains invalid characters",
+                config.name
+            ));
+        }
+
+        // Validate OVS bridge configuration
+        if config.if_type == InterfaceType::OvsBridge {
+            // Validate IP configuration
+            if let Some(ipv4) = &config.ipv4 {
+                if ipv4.enabled && ipv4.dhcp == Some(false) {
+                    // Static IP requires address
+                    if ipv4.address.is_none() || ipv4.address.as_ref().unwrap().is_empty() {
+                        return Err(anyhow!(
+                            "Static IP enabled for {} but no address specified",
+                            config.name
+                        ));
+                    }
+
+                    // Validate IP addresses
+                    if let Some(addresses) = &ipv4.address {
+                        for addr in addresses {
+                            // Basic IP validation
+                            if !addr.ip.contains('.') || addr.prefix > 32 {
+                                return Err(anyhow!(
+                                    "Invalid IPv4 address/prefix: {}/{}",
+                                    addr.ip,
+                                    addr.prefix
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Validate enslaved interfaces
+        if let Some(controller) = &config.controller {
+            if config.if_type == InterfaceType::OvsBridge {
+                return Err(anyhow!(
+                    "OVS bridge '{}' cannot be enslaved to another bridge",
+                    config.name
+                ));
+            }
+
+            // Enslaved interfaces should not have IP configuration
+            if let Some(ipv4) = &config.ipv4 {
+                if ipv4.enabled {
+                    log::warn!(
+                        "Interface '{}' is enslaved to '{}' but has IP configuration - will be ignored",
+                        config.name,
+                        controller
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Check if OVS is installed and running
+    async fn check_ovs_available(&self) -> Result<()> {
+        let output = AsyncCommand::new("ovs-vsctl")
+            .arg("--version")
+            .output()
+            .await
+            .context("Failed to check OVS version - is openvswitch-switch installed?")?;
+
+        if !output.status.success() {
+            return Err(anyhow!("OVS is not available or not running"));
+        }
+
+        Ok(())
+    }
+
     /// Query current network state from systemd-networkd
     async fn query_networkd_state(&self) -> Result<NetworkConfig> {
         let output = AsyncCommand::new("networkctl")
@@ -234,10 +325,15 @@ impl NetworkStatePlugin {
     }
 
     /// Generate .netdev file content for OVS bridges
+    /// Note: OVS bridges are created via ovs-vsctl, but systemd-networkd
+    /// needs a .netdev file to recognize them as managed interfaces
     fn generate_netdev_file(&self, config: &InterfaceConfig) -> Option<String> {
         if config.if_type == InterfaceType::OvsBridge {
+            // systemd-networkd doesn't directly support OVS, but we still write
+            // a minimal .netdev to signal this is a managed interface
+            // The actual OVS bridge is created by ovs-vsctl
             Some(format!(
-                "[NetDev]\nName={}\nKind=openvswitch\n",
+                "[NetDev]\nName={}\nKind=bridge\nDescription=OVS Bridge managed by ovs-port-agent\n",
                 config.name
             ))
         } else {
@@ -245,9 +341,108 @@ impl NetworkStatePlugin {
         }
     }
 
+    /// Create OVS bridge using ovs-vsctl
+    async fn create_ovs_bridge(&self, name: &str) -> Result<()> {
+        // Check if bridge already exists
+        let check_output = AsyncCommand::new("ovs-vsctl")
+            .args(["br-exists", name])
+            .output()
+            .await
+            .context("Failed to check if bridge exists")?;
+
+        if check_output.status.success() {
+            // Bridge already exists
+            return Ok(());
+        }
+
+        // Create the bridge
+        let output = AsyncCommand::new("ovs-vsctl")
+            .args(["add-br", name])
+            .output()
+            .await
+            .context("Failed to create OVS bridge")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("Failed to create OVS bridge {}: {}", name, stderr));
+        }
+
+        log::info!("Created OVS bridge: {}", name);
+        Ok(())
+    }
+
+    /// Attach port to OVS bridge
+    async fn attach_ovs_port(&self, bridge: &str, port: &str) -> Result<()> {
+        // Check if port is already attached
+        let list_output = AsyncCommand::new("ovs-vsctl")
+            .args(["list-ports", bridge])
+            .output()
+            .await
+            .context("Failed to list bridge ports")?;
+
+        let ports = String::from_utf8_lossy(&list_output.stdout);
+        if ports.lines().any(|p| p.trim() == port) {
+            // Port already attached
+            return Ok(());
+        }
+
+        // Attach the port
+        let output = AsyncCommand::new("ovs-vsctl")
+            .args(["add-port", bridge, port])
+            .output()
+            .await
+            .context("Failed to attach port to bridge")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!(
+                "Failed to attach port {} to bridge {}: {}",
+                port,
+                bridge,
+                stderr
+            ));
+        }
+
+        log::info!("Attached port {} to bridge {}", port, bridge);
+        Ok(())
+    }
+
+    /// Delete OVS bridge
+    async fn delete_ovs_bridge(&self, name: &str) -> Result<()> {
+        let output = AsyncCommand::new("ovs-vsctl")
+            .args(["--if-exists", "del-br", name])
+            .output()
+            .await
+            .context("Failed to delete OVS bridge")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("Failed to delete OVS bridge {}: {}", name, stderr));
+        }
+
+        log::info!("Deleted OVS bridge: {}", name);
+        Ok(())
+    }
+
     /// Write network configuration files
     async fn write_config_files(&self, config: &InterfaceConfig) -> Result<()> {
         use tokio::fs;
+
+        // Validate configuration first
+        self.validate_interface_config(config)?;
+
+        // If it's an OVS bridge, check OVS is available and create it
+        if config.if_type == InterfaceType::OvsBridge {
+            self.check_ovs_available().await?;
+            self.create_ovs_bridge(&config.name).await?;
+
+            // Attach ports if specified
+            if let Some(ports) = &config.ports {
+                for port in ports {
+                    self.attach_ovs_port(&config.name, port).await?;
+                }
+            }
+        }
 
         let network_file_path = format!("{}/10-{}.network", self.config_dir, config.name);
 
@@ -378,6 +573,21 @@ impl StatePlugin for NetworkStatePlugin {
                     }
                 }
                 StateAction::Delete { resource } => {
+                    // Check if it's an OVS bridge and delete it
+                    if resource.starts_with("ovsbr") {
+                        match self.delete_ovs_bridge(resource).await {
+                            Ok(_) => {
+                                changes_applied.push(format!("Deleted OVS bridge: {}", resource));
+                            }
+                            Err(e) => {
+                                errors.push(format!(
+                                    "Failed to delete OVS bridge {}: {}",
+                                    resource, e
+                                ));
+                            }
+                        }
+                    }
+
                     // Remove config files
                     let network_file = format!("{}/10-{}.network", self.config_dir, resource);
                     let netdev_file = format!("{}/10-{}.netdev", self.config_dir, resource);
@@ -385,7 +595,7 @@ impl StatePlugin for NetworkStatePlugin {
                     let _ = tokio::fs::remove_file(network_file).await;
                     let _ = tokio::fs::remove_file(netdev_file).await;
 
-                    changes_applied.push(format!("Removed interface: {}", resource));
+                    changes_applied.push(format!("Removed interface config: {}", resource));
                 }
                 StateAction::NoOp { .. } => {}
             }
