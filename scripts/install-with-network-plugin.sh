@@ -106,42 +106,8 @@ HELP
   esac
 done
 
-# Handle introspection mode
-if [[ ${INTROSPECT} -eq 1 ]]; then
-  echo "=========================================="
-  echo " Auto-Detecting Network Configuration"
-  echo "=========================================="
-  echo ""
-  
-  # Run introspection script
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  INTROSPECT_SCRIPT="${SCRIPT_DIR}/introspect-network.sh"
-  
-  if [[ ! -f "${INTROSPECT_SCRIPT}" ]]; then
-    echo -e "${RED}ERROR: Introspection script not found${NC}" >&2
-    echo "Expected: ${INTROSPECT_SCRIPT}"
-    exit 1
-  fi
-  
-  # Generate config to temp file
-  NETWORK_CONFIG="/tmp/network-introspected-$$.yaml"
-  "${INTROSPECT_SCRIPT}" "${NETWORK_CONFIG}" || {
-    echo -e "${RED}ERROR: Network introspection failed${NC}" >&2
-    exit 1
-  }
-  
-  echo "Using auto-detected configuration: ${NETWORK_CONFIG}"
-  echo ""
-  
-  # Ask for confirmation
-  read -p "Use this configuration? [Y/n] " -n 1 -r
-  echo
-  if [[ $REPLY =~ ^[Nn]$ ]]; then
-    echo "Installation cancelled"
-    rm -f "${NETWORK_CONFIG}"
-    exit 0
-  fi
-else
+# Validate config mode (but don't generate yet if introspecting)
+if [[ ${INTROSPECT} -eq 0 ]]; then
   # Validate network config
   if [[ -z "${NETWORK_CONFIG}" ]]; then
     echo -e "${RED}ERROR: --network-config is required (or use --introspect)${NC}" >&2
@@ -166,7 +132,11 @@ else
 fi
 
 echo "Configuration:"
-echo "  Network Config: ${NETWORK_CONFIG}"
+if [[ ${INTROSPECT} -eq 1 ]]; then
+  echo "  Network Config: Auto-detect (introspect)"
+else
+  echo "  Network Config: ${NETWORK_CONFIG}"
+fi
 echo "  Install Prefix: ${PREFIX}"
 echo "  Add ovsbr1: $([ ${WITH_OVSBR1} -eq 1 ] && echo 'Yes' || echo 'No')"
 echo "  Enable Service: $([ ${ENABLE_SERVICE} -eq 1 ] && echo 'Yes' || echo 'No')"
@@ -251,6 +221,7 @@ echo "=========================================="
 echo ""
 
 BIN_DEST="${PREFIX}/bin/ovs-port-agent"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="/etc/ovs-port-agent"
 CONFIG_FILE="${CONFIG_DIR}/config.toml"
 LEDGER_DIR="/var/lib/ovs-port-agent"
@@ -291,9 +262,36 @@ echo ""
 echo -e "${GREEN}✓${NC} Files installed"
 echo ""
 
+# NOW run introspection if needed (binary is installed)
+if [[ ${INTROSPECT} -eq 1 ]]; then
+  echo "=========================================="
+  echo " Step 3: Auto-Detecting Network"
+  echo "=========================================="
+  echo ""
+  
+  INTROSPECT_SCRIPT="${SCRIPT_DIR}/introspect-network.sh"
+  
+  if [[ ! -f "${INTROSPECT_SCRIPT}" ]]; then
+    echo -e "${RED}ERROR: Introspection script not found${NC}" >&2
+    echo "Expected: ${INTROSPECT_SCRIPT}"
+    exit 1
+  fi
+  
+  # Generate config to temp file
+  NETWORK_CONFIG="/tmp/network-introspected-$$.yaml"
+  "${INTROSPECT_SCRIPT}" "${NETWORK_CONFIG}" || {
+    echo -e "${RED}ERROR: Network introspection failed${NC}" >&2
+    exit 1
+  }
+  
+  echo ""
+  echo "Using auto-detected configuration"
+  echo ""
+fi
+
 # Apply network configuration
 echo "=========================================="
-echo " Step 3: Apply Network Configuration"
+echo " Step 4: Apply Network Configuration"
 echo "=========================================="
 echo ""
 
@@ -431,7 +429,7 @@ echo ""
 # Enable service
 if [[ ${ENABLE_SERVICE} -eq 1 ]]; then
   echo "=========================================="
-  echo " Step 4: Enable Service"
+  echo " Step 5: Enable Service"
   echo "=========================================="
   echo ""
   
@@ -450,7 +448,7 @@ if [[ ${ENABLE_SERVICE} -eq 1 ]]; then
   fi
 else
   echo "=========================================="
-  echo " Step 4: Service (Not Enabled)"
+  echo " Step 5: Service (Not Enabled)"
   echo "=========================================="
   echo ""
   echo "To enable later:"
