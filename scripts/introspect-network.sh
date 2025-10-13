@@ -10,12 +10,12 @@ echo ""
 
 # Find primary interface (first non-lo, non-ovs, non-docker with IP)
 # Prefer physical/wifi interfaces over bridges
-PRIMARY_IFACE=$(ip -o -4 addr show | grep -v "lo" | grep -v "ovsbr" | grep -v "docker" | grep -v "br-" | grep -v "veth" | head -1 | awk '{print $2}')
+PRIMARY_IFACE=$(ip -o -4 addr show | awk '$2 !~ /^(lo|ovsbr|docker|br-|veth)/ {print $2}' | head -1)
 
 # Fallback to any interface with IP if no physical found
 if [[ -z "${PRIMARY_IFACE}" ]]; then
   echo "No physical interface found, checking all interfaces..."
-  PRIMARY_IFACE=$(ip -o -4 addr show | grep -v "^1:" | grep -v "lo" | grep -v "docker" | grep -v "br-" | grep -v "veth" | head -1 | awk '{print $2}')
+  PRIMARY_IFACE=$(ip -o -4 addr show | awk '$1 !~ /^1:/ && $2 !~ /^(lo|docker|br-|veth)/ {print $2}' | head -1)
 fi
 
 if [[ -z "${PRIMARY_IFACE}" ]]; then
