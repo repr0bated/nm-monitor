@@ -422,7 +422,7 @@ echo ""
 # Verify
 echo "Verifying network state..."
 echo "---"
-"${BIN_DEST}" query-state --plugin network | head -40 || true
+"${BIN_DEST}" query-state --plugin net | head -40 || true
 echo "---"
 echo ""
 

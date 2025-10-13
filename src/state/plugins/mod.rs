@@ -1,4 +1,6 @@
 // Plugin implementations
-pub mod network;
+pub mod net;
+pub mod netcfg;
 
-pub use network::NetworkStatePlugin;
+pub use net::NetStatePlugin;
+pub use netcfg::NetcfgStatePlugin;

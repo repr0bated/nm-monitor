@@ -155,9 +155,12 @@ async fn main() -> Result<()> {
             let state_manager =
                 std::sync::Arc::new(state::manager::StateManager::new(ledger.clone()));
 
-            // Register network plugin
+            // Register plugins
             state_manager
-                .register_plugin(Box::new(state::plugins::NetworkStatePlugin::new()))
+                .register_plugin(Box::new(state::plugins::NetStatePlugin::new()))
+                .await;
+            state_manager
+                .register_plugin(Box::new(state::plugins::NetcfgStatePlugin::new()))
                 .await;
 
             // Set up RPC state for container interface creation/removal
@@ -254,7 +257,10 @@ async fn main() -> Result<()> {
             ));
             let state_manager = state::manager::StateManager::new(ledger.clone());
             state_manager
-                .register_plugin(Box::new(state::plugins::NetworkStatePlugin::new()))
+                .register_plugin(Box::new(state::plugins::NetStatePlugin::new()))
+                .await;
+            state_manager
+                .register_plugin(Box::new(state::plugins::NetcfgStatePlugin::new()))
                 .await;
 
             // Load and apply state
@@ -289,7 +295,10 @@ async fn main() -> Result<()> {
             ));
             let state_manager = state::manager::StateManager::new(ledger.clone());
             state_manager
-                .register_plugin(Box::new(state::plugins::NetworkStatePlugin::new()))
+                .register_plugin(Box::new(state::plugins::NetStatePlugin::new()))
+                .await;
+            state_manager
+                .register_plugin(Box::new(state::plugins::NetcfgStatePlugin::new()))
                 .await;
 
             // Query state
@@ -319,7 +328,10 @@ async fn main() -> Result<()> {
             ));
             let state_manager = state::manager::StateManager::new(ledger.clone());
             state_manager
-                .register_plugin(Box::new(state::plugins::NetworkStatePlugin::new()))
+                .register_plugin(Box::new(state::plugins::NetStatePlugin::new()))
+                .await;
+            state_manager
+                .register_plugin(Box::new(state::plugins::NetcfgStatePlugin::new()))
                 .await;
 
             // Load desired state and calculate diff

@@ -1,0 +1,22 @@
+version: "1.0"
+plugins:
+  netcfg:
+    ovs_flows:
+      # Allow traffic to 10.0.0.0/8 subnet
+      - bridge: ovsbr0
+        priority: 200
+        match_rule: "ip,nw_dst=10.0.0.0/8"
+        actions: "normal"
+        
+      # Forward HTTPS traffic to specific port
+      - bridge: ovsbr0
+        priority: 300
+        match_rule: "tcp,tp_dst=443"
+        actions: "output:1"
+        
+      # Drop traffic from specific source
+      - bridge: ovsbr0
+        priority: 250
+        match_rule: "ip,nw_src=192.168.1.100"
+        actions: "drop"
+

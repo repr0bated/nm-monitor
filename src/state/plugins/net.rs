@@ -1,4 +1,5 @@
-// Network state plugin - manages network configuration via systemd-networkd
+// Net state plugin - manages core network infrastructure via systemd-networkd
+// Handles: interfaces, bridges, IPs, basic connectivity (set in stone)
 use crate::state::plugin::{
     ApplyResult, Checkpoint, PluginCapabilities, StateAction, StateDiff, StatePlugin,
 };
@@ -65,12 +66,12 @@ pub struct AddressConfig {
     pub prefix: u8,
 }
 
-/// Network state plugin implementation
-pub struct NetworkStatePlugin {
+/// Net state plugin implementation
+pub struct NetStatePlugin {
     config_dir: String,
 }
 
-impl NetworkStatePlugin {
+impl NetStatePlugin {
     pub fn new() -> Self {
         Self {
             config_dir: "/etc/systemd/network".to_string(),
@@ -599,9 +600,9 @@ impl NetworkStatePlugin {
 }
 
 #[async_trait]
-impl StatePlugin for NetworkStatePlugin {
+impl StatePlugin for NetStatePlugin {
     fn name(&self) -> &str {
-        "network"
+        "net"
     }
 
     fn version(&self) -> &str {
@@ -789,7 +790,7 @@ impl StatePlugin for NetworkStatePlugin {
     }
 }
 
-impl Default for NetworkStatePlugin {
+impl Default for NetStatePlugin {
     fn default() -> Self {
         Self::new()
     }

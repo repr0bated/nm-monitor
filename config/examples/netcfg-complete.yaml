@@ -1,0 +1,33 @@
+version: "1.0"
+plugins:
+  netcfg:
+    # Static routing configuration
+    routing:
+      - destination: 10.0.0.0/8
+        gateway: 172.16.0.1
+        interface: ovsbr0
+        
+      - destination: 192.168.100.0/24
+        gateway: 172.16.0.254
+        
+    # OVS flow rules
+    ovs_flows:
+      # Allow VPN traffic
+      - bridge: ovsbr0
+        priority: 200
+        match_rule: "ip,nw_dst=10.0.0.0/8"
+        actions: "normal"
+        
+      # QoS: prioritize HTTPS
+      - bridge: ovsbr0
+        priority: 300
+        match_rule: "tcp,tp_dst=443"
+        actions: "output:1"
+        
+    # DNS configuration
+    dns:
+      hostname: netmaker-server
+      search_domains:
+        - vpn.internal
+        - internal.example.com
+
