@@ -101,7 +101,7 @@ echo ""
 
 # Query current state
 log "${YELLOW}[INFO]${NC} Querying current network state..."
-ovs-port-agent query-state --plugin net || true
+ovs-port-agent query-state net || true
 echo ""
 
 # Show what will change
@@ -148,7 +148,7 @@ ovs-vsctl show
 echo ""
 
 log "${YELLOW}=== Plugin State ===${NC}"
-ovs-port-agent query-state --plugin net | head -50
+ovs-port-agent query-state net | head -50
 echo ""
 
 log "${GREEN}========================================${NC}"

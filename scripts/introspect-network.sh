@@ -148,7 +148,7 @@ cat > "${OUTPUT_FILE}" <<EOF
 # Created: $(date)
 # Source: ${PRIMARY_IFACE} (${IP_ADDR}/${PREFIX})
 
-version: "1.0"
+version: 1
 
 plugins:
   net:
