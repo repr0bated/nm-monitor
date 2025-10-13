@@ -31,6 +31,7 @@ NETWORK_CONFIG=""
 ENABLE_SERVICE=0
 PREFIX="/usr/local"
 WITH_OVSBR1=0
+INTROSPECT=0
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -39,6 +40,10 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { echo "Missing value for --network-config" >&2; exit 1; }
       NETWORK_CONFIG="$2"
       shift 2
+      ;;
+    --introspect)
+      INTROSPECT=1
+      shift
       ;;
     --with-ovsbr1)
       WITH_OVSBR1=1
@@ -60,14 +65,24 @@ Usage: $0 [options]
 Simple installation using declarative network configuration.
 
 Options:
-  --network-config FILE   Path to network config YAML (required)
+  --network-config FILE   Path to network config YAML (required*)
+  --introspect            Auto-detect network and generate config (replaces --network-config)
   --with-ovsbr1           Add ovsbr1 isolated bridge (for Docker/containers)
   --system                Enable and start systemd service after install
   --prefix DIR            Installation prefix (default: /usr/local)
   --help                  Show this help
 
-Example:
+*Not required if using --introspect
+
+Examples:
+  # Use existing config
   sudo $0 --network-config config/examples/network-ovs-bridges.yaml --system
+  
+  # Auto-detect network (introspect)
+  sudo $0 --introspect --system
+  
+  # Introspect + add ovsbr1
+  sudo $0 --introspect --with-ovsbr1 --system
 
 This installer:
   1. Builds the release binary
@@ -91,22 +106,63 @@ HELP
   esac
 done
 
-# Validate network config
-if [[ -z "${NETWORK_CONFIG}" ]]; then
-  echo -e "${RED}ERROR: --network-config is required${NC}" >&2
+# Handle introspection mode
+if [[ ${INTROSPECT} -eq 1 ]]; then
+  echo "=========================================="
+  echo " Auto-Detecting Network Configuration"
+  echo "=========================================="
   echo ""
-  echo "Example configs available:"
-  echo "  config/examples/test-ovs-simple.yaml"
-  echo "  config/examples/network-ovs-bridges.yaml"
-  echo "  config/examples/network-static-ip.yaml"
+  
+  # Run introspection script
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  INTROSPECT_SCRIPT="${SCRIPT_DIR}/introspect-network.sh"
+  
+  if [[ ! -f "${INTROSPECT_SCRIPT}" ]]; then
+    echo -e "${RED}ERROR: Introspection script not found${NC}" >&2
+    echo "Expected: ${INTROSPECT_SCRIPT}"
+    exit 1
+  fi
+  
+  # Generate config to temp file
+  NETWORK_CONFIG="/tmp/network-introspected-$$.yaml"
+  "${INTROSPECT_SCRIPT}" "${NETWORK_CONFIG}" || {
+    echo -e "${RED}ERROR: Network introspection failed${NC}" >&2
+    exit 1
+  }
+  
+  echo "Using auto-detected configuration: ${NETWORK_CONFIG}"
   echo ""
-  echo "Run with --help for more info"
-  exit 1
-fi
+  
+  # Ask for confirmation
+  read -p "Use this configuration? [Y/n] " -n 1 -r
+  echo
+  if [[ $REPLY =~ ^[Nn]$ ]]; then
+    echo "Installation cancelled"
+    rm -f "${NETWORK_CONFIG}"
+    exit 0
+  fi
+else
+  # Validate network config
+  if [[ -z "${NETWORK_CONFIG}" ]]; then
+    echo -e "${RED}ERROR: --network-config is required (or use --introspect)${NC}" >&2
+    echo ""
+    echo "Options:"
+    echo "  1. Use existing config: --network-config FILE"
+    echo "  2. Auto-detect: --introspect"
+    echo ""
+    echo "Example configs available:"
+    echo "  config/examples/test-ovs-simple.yaml"
+    echo "  config/examples/network-ovs-bridges.yaml"
+    echo "  config/examples/network-static-ip.yaml"
+    echo ""
+    echo "Run with --help for more info"
+    exit 1
+  fi
 
-if [[ ! -f "${NETWORK_CONFIG}" ]]; then
-  echo -e "${RED}ERROR: Network config not found: ${NETWORK_CONFIG}${NC}" >&2
-  exit 1
+  if [[ ! -f "${NETWORK_CONFIG}" ]]; then
+    echo -e "${RED}ERROR: Network config not found: ${NETWORK_CONFIG}${NC}" >&2
+    exit 1
+  fi
 fi
 
 echo "Configuration:"
