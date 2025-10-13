@@ -1,4 +1,4 @@
-# OVS Bridge Configuration for Debian 13
+# #OVS Bridge Configuration for Debian 13
 # Creates ovsbr0 and ovsbr1 with specific IPs
 
 version: 1

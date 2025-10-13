@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Introspect current network configuration and generate YAML config
+# #Introspect current network configuration and generate YAML config
 
 set -euo pipefail
 

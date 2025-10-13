@@ -30,7 +30,7 @@ use tracing::{info, warn};
 #[derive(Parser)]
 #[command(name = "ovs-port-agent", version, about = "OVS container port agent", long_about=None)]
 struct Cli {
-    /// Path to config file (default: /etc/ovs-port-agent/config.toml)
+    /// Path to config file is (default: /etc/ovs-port-agent/config.toml)
     #[arg(global = true)]
     config: Option<PathBuf>,
 

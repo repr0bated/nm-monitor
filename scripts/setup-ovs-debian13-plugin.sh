@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # OVS Bridge Setup for Debian 13 using nm-monitor plugin system
-# Creates ovsbr0 and ovsbr1 using declarative configuration
+## Creates ovsbr0 and ovsbr1 using declarative configuration
 
 set -euo pipefail
 

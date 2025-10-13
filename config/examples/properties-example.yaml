@@ -25,7 +25,7 @@ plugins:
           notes: "Primary uplink - do not modify"
           contact_email: "netops@example.com"
           
-        # Schema tracks all field names (append-only)
+        # Schema tracks all fieldd names (append-only)
         # Fields can NEVER be removed once added
         # Values CAN change (ledger tracks)
         property_schema:
