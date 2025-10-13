@@ -30,6 +30,7 @@ fi
 NETWORK_CONFIG=""
 ENABLE_SERVICE=0
 PREFIX="/usr/local"
+WITH_OVSBR1=0
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -38,6 +39,10 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { echo "Missing value for --network-config" >&2; exit 1; }
       NETWORK_CONFIG="$2"
       shift 2
+      ;;
+    --with-ovsbr1)
+      WITH_OVSBR1=1
+      shift
       ;;
     --system)
       ENABLE_SERVICE=1
@@ -56,6 +61,7 @@ Simple installation using declarative network configuration.
 
 Options:
   --network-config FILE   Path to network config YAML (required)
+  --with-ovsbr1           Add ovsbr1 isolated bridge (for Docker/containers)
   --system                Enable and start systemd service after install
   --prefix DIR            Installation prefix (default: /usr/local)
   --help                  Show this help
@@ -106,6 +112,7 @@ fi
 echo "Configuration:"
 echo "  Network Config: ${NETWORK_CONFIG}"
 echo "  Install Prefix: ${PREFIX}"
+echo "  Add ovsbr1: $([ ${WITH_OVSBR1} -eq 1 ] && echo 'Yes' || echo 'No')"
 echo "  Enable Service: $([ ${ENABLE_SERVICE} -eq 1 ] && echo 'Yes' || echo 'No')"
 echo ""
 
@@ -209,10 +216,52 @@ echo ""
 echo "Config: ${NETWORK_CONFIG}"
 echo ""
 
+# Add ovsbr1 to config if requested
+FINAL_CONFIG="${NETWORK_CONFIG}"
+if [[ ${WITH_OVSBR1} -eq 1 ]]; then
+  echo "Adding ovsbr1 isolated bridge to configuration..."
+  FINAL_CONFIG="/tmp/network-config-with-ovsbr1-$$.yaml"
+  
+  # Read original config and add ovsbr1
+  python3 - <<'PYTHON' "${NETWORK_CONFIG}" "${FINAL_CONFIG}"
+import sys
+import yaml
+
+with open(sys.argv[1], 'r') as f:
+    config = yaml.safe_load(f)
+
+# Check if ovsbr1 already exists
+existing_names = [iface['name'] for iface in config.get('network', {}).get('interfaces', [])]
+if 'ovsbr1' not in existing_names:
+    # Add ovsbr1 configuration
+    ovsbr1_config = {
+        'name': 'ovsbr1',
+        'type': 'ovs-bridge',
+        'ipv4': {
+            'enabled': True,
+            'dhcp': False,
+            'address': [
+                {'ip': '172.18.0.1', 'prefix': 16}
+            ]
+        }
+    }
+    config['network']['interfaces'].append(ovsbr1_config)
+    print("  ✓ Added ovsbr1 (172.18.0.1/16) to configuration")
+else:
+    print("  ℹ️  ovsbr1 already in config, using existing configuration")
+
+with open(sys.argv[2], 'w') as f:
+    yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+PYTHON
+  
+  echo "  Using temporary config: ${FINAL_CONFIG}"
+  echo ""
+fi
+
 # Show diff first
 echo "Calculating changes (dry run)..."
 echo "---"
-"${BIN_DEST}" show-diff "${NETWORK_CONFIG}" || {
+"${BIN_DEST}" show-diff "${FINAL_CONFIG}" || {
   echo -e "${RED}ERROR: Failed to calculate diff${NC}" >&2
   echo "Check your network config syntax"
   exit 1
@@ -224,12 +273,14 @@ read -p "Apply these changes? [y/N] " -n 1 -r
 echo
 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
   echo "Installation cancelled"
+  [[ -f "${FINAL_CONFIG}" && "${FINAL_CONFIG}" != "${NETWORK_CONFIG}" ]] && rm -f "${FINAL_CONFIG}"
   echo "To apply later: sudo ovs-port-agent apply-state ${NETWORK_CONFIG}"
   exit 0
 fi
 
 echo "Applying network configuration..."
-"${BIN_DEST}" apply-state "${NETWORK_CONFIG}" || {
+"${BIN_DEST}" apply-state "${FINAL_CONFIG}" || {
+  [[ -f "${FINAL_CONFIG}" && "${FINAL_CONFIG}" != "${NETWORK_CONFIG}" ]] && rm -f "${FINAL_CONFIG}"
   echo -e "${RED}ERROR: Failed to apply network config${NC}" >&2
   echo ""
   echo "Troubleshooting:"
@@ -241,6 +292,10 @@ echo "Applying network configuration..."
 
 echo ""
 echo -e "${GREEN}✓${NC} Network configuration applied"
+
+# Cleanup temp config
+[[ -f "${FINAL_CONFIG}" && "${FINAL_CONFIG}" != "${NETWORK_CONFIG}" ]] && rm -f "${FINAL_CONFIG}"
+
 echo ""
 
 # Verify

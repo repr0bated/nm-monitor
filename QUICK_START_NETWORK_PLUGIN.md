@@ -8,18 +8,28 @@
 # Option A: Safe test (isolated bridge, no uplink)
 NETWORK_CONFIG=config/examples/test-ovs-simple.yaml
 
-# Option B: Production (ovsbr0 + ovsbr1 with uplink)
+# Option B: Single bridge (ovsbr0 only)
+NETWORK_CONFIG=config/examples/network-ovsbr0-only.yaml
+
+# Option C: Production (ovsbr0 + ovsbr1 with uplink)
 NETWORK_CONFIG=config/examples/network-ovs-bridges.yaml
 
-# Option C: VPS with static IP
+# Option D: VPS with static IP
 NETWORK_CONFIG=config/examples/network-static-ip.yaml
 ```
 
 ### 2. Install
 
 ```bash
+# Install with your chosen config
 sudo ./scripts/install-with-network-plugin.sh \
   --network-config ${NETWORK_CONFIG} \
+  --system
+
+# Or add ovsbr1 dynamically (for Docker/containers)
+sudo ./scripts/install-with-network-plugin.sh \
+  --network-config ${NETWORK_CONFIG} \
+  --with-ovsbr1 \
   --system
 ```
 
@@ -50,6 +60,23 @@ sudo ./scripts/install-with-network-plugin.sh \
 # Verify
 sudo ovs-vsctl show
 sudo ovs-port-agent query-state --plugin network
+```
+
+---
+
+## Example: Single Bridge (ovsbr0 only)
+
+```bash
+# Install just ovsbr0 (for basic setup)
+sudo ./scripts/install-with-network-plugin.sh \
+  --network-config config/examples/network-ovsbr0-only.yaml \
+  --system
+
+# Later, add ovsbr1 if needed
+sudo ./scripts/install-with-network-plugin.sh \
+  --network-config config/examples/network-ovsbr0-only.yaml \
+  --with-ovsbr1 \
+  --system
 ```
 
 ---
