@@ -30,7 +30,7 @@ pub struct RouteConfig {
     pub interface: Option<String>, // e.g., "ovsbr0"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metric: Option<u32>,
-    
+
     /// Dynamic properties for advanced routing options
     #[serde(skip_serializing_if = "Option::is_none")]
     pub properties: Option<HashMap<String, Value>>,
@@ -42,7 +42,7 @@ pub struct OvsFlowConfig {
     pub priority: u32,
     pub match_rule: String, // OpenFlow match, e.g., "ip,nw_dst=10.0.0.0/8"
     pub actions: String,    // OpenFlow actions, e.g., "output:1"
-    
+
     /// Dynamic properties for advanced flow options
     #[serde(skip_serializing_if = "Option::is_none")]
     pub properties: Option<HashMap<String, Value>>,
@@ -54,7 +54,7 @@ pub struct DnsConfig {
     pub search_domains: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hostname: Option<String>,
-    
+
     /// Dynamic properties for DNS options
     #[serde(skip_serializing_if = "Option::is_none")]
     pub properties: Option<HashMap<String, Value>>,
@@ -413,18 +413,14 @@ impl StatePlugin for NetcfgStatePlugin {
                 match resource.as_str() {
                     "routing" => {
                         if let Some(routes) = changes.get("new") {
-                            let routes: Vec<RouteConfig> = serde_json::from_value(
-                                routes.clone(),
-                            )?;
+                            let routes: Vec<RouteConfig> = serde_json::from_value(routes.clone())?;
                             self.apply_routes(&routes).await?;
                             results.push(format!("Applied {} routes", routes.len()));
                         }
                     }
                     "ovs_flows" => {
                         if let Some(flows) = changes.get("new") {
-                            let flows: Vec<OvsFlowConfig> = serde_json::from_value(
-                                flows.clone(),
-                            )?;
+                            let flows: Vec<OvsFlowConfig> = serde_json::from_value(flows.clone())?;
                             self.apply_ovs_flows(&flows).await?;
                             results.push(format!("Applied {} OVS flows", flows.len()));
                         }
@@ -494,4 +490,3 @@ impl StatePlugin for NetcfgStatePlugin {
         }
     }
 }
-

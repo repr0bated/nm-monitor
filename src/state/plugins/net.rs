@@ -29,15 +29,15 @@ pub struct InterfaceConfig {
     pub ipv6: Option<Ipv6Config>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub controller: Option<String>,
-    
+
     /// Dynamic properties - introspection captures ALL hardware properties here
     /// Examples: mtu, mac_addresses (array), speed, duplex, txqueuelen, etc.
-    /// 
+    ///
     /// APPEND-ONLY: Field names are permanent once added (by introspection or user)
     /// Values are mutable (ledger tracks all changes)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub properties: Option<HashMap<String, Value>>,
-    
+
     /// Property schema - tracks which fields exist (append-only set)
     /// Used for validation: new fields can be added, existing fields cannot be removed
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -112,7 +112,7 @@ impl NetStatePlugin {
                 config.name
             ));
         }
-        
+
         // Validate property schema: if schema exists, all fields must be present
         if let Some(ref schema) = config.property_schema {
             if let Some(ref properties) = config.properties {
