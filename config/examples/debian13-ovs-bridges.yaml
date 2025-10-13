@@ -25,6 +25,10 @@ plugins:
           role: "primary"
           description: "Main bridge with uplink"
           stp_enabled: false
+        property_schema:
+          - role
+          - description
+          - stp_enabled
           
       # Secondary bridge for Docker/Netmaker
       - name: ovsbr1  
@@ -43,6 +47,10 @@ plugins:
           role: "docker"
           description: "Bridge for containers/Netmaker"
           stp_enabled: false
+        property_schema:
+          - role
+          - description
+          - stp_enabled
           
       # Physical uplink (will be enslaved to ovsbr0)
       - name: ens1  # Will be auto-detected

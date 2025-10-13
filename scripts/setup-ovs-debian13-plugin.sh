@@ -101,13 +101,13 @@ echo ""
 
 # Query current state
 log "${YELLOW}[INFO]${NC} Querying current network state..."
-ovs-port-agent query-state net || true
+ovs-port-agent /etc/ovs-port-agent/config.toml query-state || true
 echo ""
 
 # Show what will change
 log "${YELLOW}[INFO]${NC} Calculating changes..."
 echo ""
-ovs-port-agent show-diff "$CONFIG_TO_USE" || error_exit "Failed to calculate diff"
+ovs-port-agent /etc/ovs-port-agent/config.toml show-diff "$CONFIG_TO_USE" || error_exit "Failed to calculate diff"
 echo ""
 
 # Ask for confirmation
@@ -121,7 +121,7 @@ fi
 
 # Apply the configuration
 log "${GREEN}[INFO]${NC} Applying network configuration..."
-if ovs-port-agent apply-state "$CONFIG_TO_USE"; then
+if ovs-port-agent /etc/ovs-port-agent/config.toml apply-state "$CONFIG_TO_USE"; then
     log "${GREEN}[SUCCESS]${NC} Network configuration applied successfully!"
 else
     error_exit "Failed to apply network configuration"
@@ -148,7 +148,7 @@ ovs-vsctl show
 echo ""
 
 log "${YELLOW}=== Plugin State ===${NC}"
-ovs-port-agent query-state net | head -50
+ovs-port-agent /etc/ovs-port-agent/config.toml query-state net | head -50
 echo ""
 
 log "${GREEN}========================================${NC}"

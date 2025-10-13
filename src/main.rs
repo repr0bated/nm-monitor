@@ -120,19 +120,11 @@ async fn main() -> Result<()> {
 
     match args.command.unwrap_or(Commands::Run) {
         Commands::Run => {
-            // Ensure the bridge and optional uplink exist under NetworkManager control
-            convert_result(nm_bridge::ensure_bridge_topology(
-                cfg.bridge_name(),
-                cfg.uplink(),
-                45,
-            ))?;
+            // For systemd-networkd, we don't need to ensure bridge topology here
+            // The bridges are managed declaratively through the plugin system
+            info!("Starting ovs-port-agent service...");
 
-            // Write NetworkManager unmanaged-devices config
-            if !cfg.nm_unmanaged().is_empty() {
-                if let Err(e) = nm_config::write_unmanaged_devices(cfg.nm_unmanaged()) {
-                    warn!(error = %e, "Failed to write NM unmanaged-devices config");
-                }
-            }
+            // No need for NetworkManager configuration with systemd-networkd
 
             // Initialize FUSE mount base for Proxmox visibility
             if let Err(err) = convert_result(fuse::ensure_fuse_mount_base()) {
