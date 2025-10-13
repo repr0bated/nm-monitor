@@ -18,6 +18,7 @@ mod nm_ports;
 mod nm_query;
 mod rpc;
 mod services;
+mod state;
 mod systemd_dbus;
 mod systemd_net;
 
