@@ -69,20 +69,68 @@ pub trait LedgerPlugin: Send + Sync {
     fn validate_data(&self, data: &serde_json::Value) -> Result<bool>;
 }
 
-/// Network operations plugin
-pub struct NetworkPlugin;
+/// Generic plugin implementation that eliminates code duplication
+pub struct GenericPlugin {
+    name: &'static str,
+    categories: Vec<String>,
+    required_fields: Vec<&'static str>,
+    default_user: &'static str,
+}
 
-impl LedgerPlugin for NetworkPlugin {
-    fn name(&self) -> &str { "network" }
+impl GenericPlugin {
+    fn new(
+        name: &'static str,
+        categories: Vec<String>,
+        required_fields: Vec<&'static str>,
+        default_user: &'static str,
+    ) -> Self {
+        Self {
+            name,
+            categories,
+            required_fields,
+            default_user,
+        }
+    }
+
+    fn create_block(&self, category: &str, data: serde_json::Value) -> Result<Block> {
+        let hostname = hostname::get()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
+        Ok(Block {
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+            height: 0,                // Will be set by ledger
+            prev_hash: String::new(), // Will be set by ledger
+            hash: String::new(),      // Will be calculated by ledger
+            producer: format!("{}-plugin", self.name),
+            category: category.to_string(),
+            action: data["action"].as_str().unwrap_or("unknown").to_string(),
+            user: data["user"]
+                .as_str()
+                .or_else(|| data["username"].as_str())
+                .unwrap_or(self.default_user)
+                .to_string(),
+            hostname,
+            pid: std::process::id(),
+            data: data
+                .get("details")
+                .or(data.get("settings"))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+            metadata: extract_metadata(&data),
+            signature: None,
+        })
+    }
+}
+
+impl LedgerPlugin for GenericPlugin {
+    fn name(&self) -> &str {
+        self.name
+    }
 
     fn categories(&self) -> Vec<String> {
-        vec![
-            "bridge".to_string(),
-            "interface".to_string(),
-            "connection".to_string(),
-            "port".to_string(),
-            "connectivity".to_string(),
-        ]
+        self.categories.clone()
     }
 
     fn process_data(&self, data: serde_json::Value) -> Result<Vec<Block>> {
@@ -100,10 +148,9 @@ impl LedgerPlugin for NetworkPlugin {
     }
 
     fn validate_data(&self, data: &serde_json::Value) -> Result<bool> {
-        // Basic validation - ensure required fields exist
-        let required_fields = ["action", "details"];
-        for field in &required_fields {
-            if !data.get(*field).is_some() {
+        // Check required fields
+        for field in &self.required_fields {
+            if data.get(*field).is_none() {
                 return Ok(false);
             }
         }
@@ -111,28 +158,42 @@ impl LedgerPlugin for NetworkPlugin {
     }
 }
 
-impl NetworkPlugin {
-    fn create_block(&self, category: &str, data: serde_json::Value) -> Result<Block> {
-        let hostname = hostname::get()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
+/// Network operations plugin
+pub struct NetworkPlugin;
 
-        Ok(Block {
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            height: 0, // Will be set by ledger
-            prev_hash: String::new(), // Will be set by ledger
-            hash: String::new(), // Will be calculated by ledger
-            producer: "network-plugin".to_string(),
-            category: category.to_string(),
-            action: data["action"].as_str().unwrap_or("unknown").to_string(),
-            user: data["user"].as_str().unwrap_or("system").to_string(),
-            hostname,
-            pid: std::process::id(),
-            data: data["details"].clone(),
-            metadata: extract_metadata(&data),
-            signature: None,
-        })
+impl LedgerPlugin for NetworkPlugin {
+    fn name(&self) -> &str {
+        "network"
+    }
+
+    fn categories(&self) -> Vec<String> {
+        vec![
+            "bridge".to_string(),
+            "interface".to_string(),
+            "connection".to_string(),
+            "port".to_string(),
+            "connectivity".to_string(),
+        ]
+    }
+
+    fn process_data(&self, data: serde_json::Value) -> Result<Vec<Block>> {
+        let plugin = GenericPlugin::new(
+            "network",
+            self.categories(),
+            vec!["action", "details"],
+            "system",
+        );
+        plugin.process_data(data)
+    }
+
+    fn validate_data(&self, data: &serde_json::Value) -> Result<bool> {
+        let plugin = GenericPlugin::new(
+            "network",
+            self.categories(),
+            vec!["action", "details"],
+            "system",
+        );
+        plugin.validate_data(data)
     }
 }
 
@@ -140,7 +201,9 @@ impl NetworkPlugin {
 pub struct SettingsPlugin;
 
 impl LedgerPlugin for SettingsPlugin {
-    fn name(&self) -> &str { "settings" }
+    fn name(&self) -> &str {
+        "settings"
+    }
 
     fn categories(&self) -> Vec<String> {
         vec![
@@ -152,17 +215,8 @@ impl LedgerPlugin for SettingsPlugin {
     }
 
     fn process_data(&self, data: serde_json::Value) -> Result<Vec<Block>> {
-        let mut blocks = Vec::new();
-
-        if let Some(category) = data.get("category").and_then(|c| c.as_str()) {
-            if self.categories().contains(&category.to_string()) {
-                if let Ok(block) = self.create_block(category, data.clone()) {
-                    blocks.push(block);
-                }
-            }
-        }
-
-        Ok(blocks)
+        let plugin = GenericPlugin::new("settings", self.categories(), vec!["action"], "admin");
+        plugin.process_data(data)
     }
 
     fn validate_data(&self, data: &serde_json::Value) -> Result<bool> {
@@ -176,36 +230,13 @@ impl LedgerPlugin for SettingsPlugin {
     }
 }
 
-impl SettingsPlugin {
-    fn create_block(&self, category: &str, data: serde_json::Value) -> Result<Block> {
-        let hostname = hostname::get()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-
-        Ok(Block {
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            height: 0,
-            prev_hash: String::new(),
-            hash: String::new(),
-            producer: "settings-plugin".to_string(),
-            category: category.to_string(),
-            action: data["action"].as_str().unwrap_or("modified").to_string(),
-            user: data["user"].as_str().unwrap_or("admin").to_string(),
-            hostname,
-            pid: std::process::id(),
-            data: data["settings"].clone(),
-            metadata: extract_metadata(&data),
-            signature: None,
-        })
-    }
-}
-
 /// User management plugin
 pub struct UserPlugin;
 
 impl LedgerPlugin for UserPlugin {
-    fn name(&self) -> &str { "users" }
+    fn name(&self) -> &str {
+        "users"
+    }
 
     fn categories(&self) -> Vec<String> {
         vec![
@@ -217,53 +248,23 @@ impl LedgerPlugin for UserPlugin {
     }
 
     fn process_data(&self, data: serde_json::Value) -> Result<Vec<Block>> {
-        let mut blocks = Vec::new();
-
-        if let Some(category) = data.get("category").and_then(|c| c.as_str()) {
-            if self.categories().contains(&category.to_string()) {
-                if let Ok(block) = self.create_block(category, data.clone()) {
-                    blocks.push(block);
-                }
-            }
-        }
-
-        Ok(blocks)
+        let plugin = GenericPlugin::new(
+            "users",
+            self.categories(),
+            vec!["username", "action"],
+            "unknown",
+        );
+        plugin.process_data(data)
     }
 
     fn validate_data(&self, data: &serde_json::Value) -> Result<bool> {
-        // Validate user data has required fields
-        let required_fields = ["username", "action"];
-        for field in &required_fields {
-            if !data.get(*field).is_some() {
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
-}
-
-impl UserPlugin {
-    fn create_block(&self, category: &str, data: serde_json::Value) -> Result<Block> {
-        let hostname = hostname::get()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-
-        Ok(Block {
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            height: 0,
-            prev_hash: String::new(),
-            hash: String::new(),
-            producer: "user-plugin".to_string(),
-            category: category.to_string(),
-            action: data["action"].as_str().unwrap_or("unknown").to_string(),
-            user: data["username"].as_str().unwrap_or("unknown").to_string(),
-            hostname,
-            pid: std::process::id(),
-            data: data["details"].clone(),
-            metadata: extract_metadata(&data),
-            signature: None,
-        })
+        let plugin = GenericPlugin::new(
+            "users",
+            self.categories(),
+            vec!["username", "action"],
+            "unknown",
+        );
+        plugin.validate_data(data)
     }
 }
 
@@ -271,7 +272,9 @@ impl UserPlugin {
 pub struct StoragePlugin;
 
 impl LedgerPlugin for StoragePlugin {
-    fn name(&self) -> &str { "storage" }
+    fn name(&self) -> &str {
+        "storage"
+    }
 
     fn categories(&self) -> Vec<String> {
         vec![
@@ -283,51 +286,13 @@ impl LedgerPlugin for StoragePlugin {
     }
 
     fn process_data(&self, data: serde_json::Value) -> Result<Vec<Block>> {
-        let mut blocks = Vec::new();
-
-        if let Some(category) = data.get("category").and_then(|c| c.as_str()) {
-            if self.categories().contains(&category.to_string()) {
-                if let Ok(block) = self.create_block(category, data.clone()) {
-                    blocks.push(block);
-                }
-            }
-        }
-
-        Ok(blocks)
+        let plugin = GenericPlugin::new("storage", self.categories(), vec!["action"], "system");
+        plugin.process_data(data)
     }
 
     fn validate_data(&self, data: &serde_json::Value) -> Result<bool> {
         // Validate storage operations have path information
-        if data.get("path").is_some() || data.get("device").is_some() {
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-}
-
-impl StoragePlugin {
-    fn create_block(&self, category: &str, data: serde_json::Value) -> Result<Block> {
-        let hostname = hostname::get()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-
-        Ok(Block {
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            height: 0,
-            prev_hash: String::new(),
-            hash: String::new(),
-            producer: "storage-plugin".to_string(),
-            category: category.to_string(),
-            action: data["action"].as_str().unwrap_or("unknown").to_string(),
-            user: data["user"].as_str().unwrap_or("system").to_string(),
-            hostname,
-            pid: std::process::id(),
-            data: data["details"].clone(),
-            metadata: extract_metadata(&data),
-            signature: None,
-        })
+        Ok(data.get("path").is_some() || data.get("device").is_some())
     }
 }
 
@@ -401,14 +366,21 @@ impl BlockchainLedger {
         self.height = complete_block.height;
         self.last_hash = complete_block.hash.clone();
 
-        info!("Added block {} to blockchain (category: {}, action: {})",
-              complete_block.height, complete_block.category, complete_block.action);
+        info!(
+            "Added block {} to blockchain (category: {}, action: {})",
+            complete_block.height, complete_block.category, complete_block.action
+        );
 
         Ok(complete_block.hash)
     }
 
     /// Add data through plugin system
-    pub fn add_data(&mut self, category: &str, action: &str, data: serde_json::Value) -> Result<String> {
+    pub fn add_data(
+        &mut self,
+        category: &str,
+        action: &str,
+        data: serde_json::Value,
+    ) -> Result<String> {
         let input = serde_json::json!({
             "category": category,
             "action": action,
@@ -419,19 +391,23 @@ impl BlockchainLedger {
             "timestamp": SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
         });
 
-        // Find appropriate plugin
-        for (_plugin_name, plugin) in &self.plugins {
-            if plugin.categories().contains(&category.to_string()) {
-                if plugin.validate_data(&input)? {
-                    let blocks = plugin.process_data(input.clone())?;
-                    for block in blocks {
-                        return self.add_block(block);
-                    }
+        // Find appropriate plugin and process data
+        for plugin in self.plugins.values() {
+            if plugin.categories().contains(&category.to_string())
+                && plugin.validate_data(&input)?
+            {
+                let blocks = plugin.process_data(input.clone())?;
+                // Return the first block's hash, if any
+                if let Some(block) = blocks.into_iter().next() {
+                    return self.add_block(block);
                 }
             }
         }
 
-        Err(anyhow::anyhow!("No suitable plugin found for category: {}", category))
+        Err(anyhow::anyhow!(
+            "No suitable plugin found for category: {}",
+            category
+        ))
     }
 
     /// Register custom plugin

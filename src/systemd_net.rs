@@ -60,10 +60,7 @@ pub fn create_ovs_bridge(config: &OvsBridgeConfig) -> Result<()> {
 
     // Check if bridge already exists
     if bridge_exists(&config.name)? {
-        debug!(
-            "Bridge {} already exists, modifying",
-            config.name
-        );
+        debug!("Bridge {} already exists, modifying", config.name);
         modify_ovs_bridge(config)?;
         return Ok(());
     }
@@ -332,8 +329,7 @@ pub fn remove_bridge(bridge: &str) -> Result<()> {
 
     for file in files_to_remove {
         if std::path::Path::new(&file).exists() {
-            fs::remove_file(&file)
-                .with_context(|| format!("removing config file {}", file))?;
+            fs::remove_file(&file).with_context(|| format!("removing config file {}", file))?;
         }
     }
 

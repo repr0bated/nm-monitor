@@ -1,10 +1,9 @@
 //! OVS Port Agent - Main Application
 
+mod command;
 mod error;
 mod ovs_flows;
 use crate::ovs_flows::OvsFlowManager;
-mod systemd_net;
-mod systemd_dbus;
 mod config;
 mod fuse;
 mod interfaces;
@@ -18,11 +17,14 @@ mod nm_config;
 mod nm_ports;
 mod nm_query;
 mod rpc;
+mod services;
+mod systemd_dbus;
+mod systemd_net;
 
+use crate::error::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use tracing::{info, warn};
-use crate::error::Result;
 
 #[derive(Parser)]
 #[command(name = "ovs-port-agent", version, about = "OVS container port agent", long_about=None)]
@@ -79,8 +81,9 @@ fn init_logging() -> Result<()> {
         .with_target(false)
         .finish();
 
-    tracing::subscriber::set_global_default(subscriber)
-        .map_err(|e| crate::error::Error::Internal(format!("Failed to set tracing subscriber: {}", e)))?;
+    tracing::subscriber::set_global_default(subscriber).map_err(|e| {
+        crate::error::Error::Internal(format!("Failed to set tracing subscriber: {}", e))
+    })?;
 
     Ok(())
 }
@@ -102,7 +105,11 @@ async fn main() -> Result<()> {
     match args.command.unwrap_or(Commands::Run) {
         Commands::Run => {
             // Ensure the bridge and optional uplink exist under NetworkManager control
-            convert_result(nm_bridge::ensure_bridge_topology(cfg.bridge_name(), cfg.uplink(), 45))?;
+            convert_result(nm_bridge::ensure_bridge_topology(
+                cfg.bridge_name(),
+                cfg.uplink(),
+                45,
+            ))?;
 
             // Write NetworkManager unmanaged-devices config
             if !cfg.nm_unmanaged().is_empty() {
@@ -133,7 +140,7 @@ async fn main() -> Result<()> {
             info!(
                 "Bridge: {} (uplink: {})",
                 cfg.bridge_name(),
-                cfg.uplink().as_deref().unwrap_or("none")
+                cfg.uplink().unwrap_or("none")
             );
 
             // Run the RPC service - container interfaces will be created via D-Bus API calls
@@ -152,18 +159,19 @@ async fn main() -> Result<()> {
         } => {
             info!(raw_ifname = %raw_ifname, container_id = %container_id, vmid = %vmid, "Creating container interface");
 
-            convert_result(netlink::create_container_interface(
+            let config = netlink::InterfaceConfig::new(
                 cfg.bridge_name().to_string(),
-                &raw_ifname,
-                &container_id,
+                raw_ifname.clone(),
+                container_id.clone(),
                 vmid,
-                cfg.interfaces_path().to_string(),
-                cfg.managed_block_tag().to_string(),
-                cfg.enable_rename(),
-                cfg.naming_template().to_string(),
-                cfg.ledger_path().to_string(),
             )
-            .await)?;
+            .with_interfaces_path(cfg.interfaces_path().to_string())
+            .with_managed_tag(cfg.managed_block_tag().to_string())
+            .with_enable_rename(cfg.enable_rename())
+            .with_naming_template(cfg.naming_template().to_string())
+            .with_ledger_path(cfg.ledger_path().to_string());
+
+            convert_result(netlink::create_container_interface(config).await)?;
 
             info!(vmid = %vmid, "Container interface created successfully");
             println!("Container interface created successfully for VMID {}", vmid);
@@ -172,17 +180,22 @@ async fn main() -> Result<()> {
         Commands::RemoveInterface { interface_name } => {
             info!(interface_name = %interface_name, "Removing container interface");
 
-            convert_result(netlink::remove_container_interface(
-                cfg.bridge_name().to_string(),
-                &interface_name,
-                cfg.interfaces_path().to_string(),
-                cfg.managed_block_tag().to_string(),
-                cfg.ledger_path().to_string(),
-            )
-            .await)?;
+            convert_result(
+                netlink::remove_container_interface(
+                    cfg.bridge_name().to_string(),
+                    &interface_name,
+                    cfg.interfaces_path().to_string(),
+                    cfg.managed_block_tag().to_string(),
+                    cfg.ledger_path().to_string(),
+                )
+                .await,
+            )?;
 
             info!(interface_name = %interface_name, "Container interface removed successfully");
-            println!("Container interface {} removed successfully", interface_name);
+            println!(
+                "Container interface {} removed successfully",
+                interface_name
+            );
             Ok(())
         }
         Commands::List => {
@@ -196,6 +209,6 @@ async fn main() -> Result<()> {
         Commands::IntrospectSystemd => {
             info!("Running systemd-networkd introspection");
             convert_result(rpc::introspect_systemd_networkd().await)
-        },
+        }
     }
 }

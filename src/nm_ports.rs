@@ -128,8 +128,7 @@ fn remove_port_config(port_name: &str, eth_name: &str) -> Result<()> {
 
     for file in files_to_remove {
         if std::path::Path::new(&file).exists() {
-            fs::remove_file(&file)
-                .with_context(|| format!("removing config file {}", file))?;
+            fs::remove_file(&file).with_context(|| format!("removing config file {}", file))?;
             debug!("Removed config file: {}", file);
         }
     }

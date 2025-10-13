@@ -20,28 +20,28 @@ pub enum FlowPriority {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FlowAction {
-    Output(String),           // output:port
-    SetField(String),         // set_field:value->reg
-    SetQueue(u32),           // set_queue:queue_id
+    Output(String),               // output:port
+    SetField(String),             // set_field:value->reg
+    SetQueue(u32),                // set_queue:queue_id
     OutputWithQueue(String, u32), // set_queue:queue_id,output:port
-    Drop,                    // drop
-    Normal,                  // NORMAL
-    Local,                   // LOCAL
-    Fragment,                // fragment
-    RateLimit(u32),          // set_field:value->rate
+    Drop,                         // drop
+    Normal,                       // NORMAL
+    Local,                        // LOCAL
+    Fragment,                     // fragment
+    RateLimit(u32),               // set_field:value->rate
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FlowMatch {
-    IpSrc(String),           // nw_src=ip
-    IpDst(String),           // nw_dst=ip
-    TcpDst(u16),             // tp_dst=port
-    UdpDst(u16),             // tp_dst=port
-    Vlan(u16),               // dl_vlan=vlan_id
-    InPort(String),          // in_port=port
-    ArpTarget(String),       // arp_tpa=ip
-    Established,             // ct_state=+est
-    NewConnection,           // ct_state=-est
+    IpSrc(String),     // nw_src=ip
+    IpDst(String),     // nw_dst=ip
+    TcpDst(u16),       // tp_dst=port
+    UdpDst(u16),       // tp_dst=port
+    Vlan(u16),         // dl_vlan=vlan_id
+    InPort(String),    // in_port=port
+    ArpTarget(String), // arp_tpa=ip
+    Established,       // ct_state=+est
+    NewConnection,     // ct_state=-est
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,7 +89,10 @@ impl OvsFlowManager {
             .context("Failed to clear OVS flows")?;
 
         if !output.status.success() {
-            warn!("Failed to clear flows: {}", String::from_utf8_lossy(&output.stderr));
+            warn!(
+                "Failed to clear flows: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         Ok(())
@@ -98,7 +101,12 @@ impl OvsFlowManager {
     /// Add a single flow rule
     pub fn add_flow(&self, rule: &FlowRule) -> Result<()> {
         let flow_string = self.build_flow_string(rule);
-        info!("Adding flow: {} ({}: {})", flow_string, rule.priority.clone() as u32, rule.comment);
+        info!(
+            "Adding flow: {} ({}: {})",
+            flow_string,
+            rule.priority.clone() as u32,
+            rule.comment
+        );
 
         let output = Command::new("ovs-ofctl")
             .args(["add-flow", &self.bridge_name, &flow_string])
@@ -106,7 +114,11 @@ impl OvsFlowManager {
             .context("Failed to add OVS flow")?;
 
         if !output.status.success() {
-            warn!("Failed to add flow '{}': {}", flow_string, String::from_utf8_lossy(&output.stderr));
+            warn!(
+                "Failed to add flow '{}': {}",
+                flow_string,
+                String::from_utf8_lossy(&output.stderr)
+            );
             return Err(anyhow::anyhow!("Failed to add flow"));
         }
 
@@ -133,7 +145,11 @@ impl OvsFlowManager {
             .context("Failed to remove OVS flow")?;
 
         if !output.status.success() {
-            warn!("Failed to remove flow '{}': {}", flow_string, String::from_utf8_lossy(&output.stderr));
+            warn!(
+                "Failed to remove flow '{}': {}",
+                flow_string,
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         Ok(())
@@ -150,20 +166,29 @@ impl OvsFlowManager {
     }
 
     /// Setup container-specific routing rules
-    pub fn setup_container_routing(&self, container_ip: &str, container_port: &str, register_id: u32) -> Result<()> {
-        info!("Setting up container-specific routing for {} (port: {}, reg: {})", container_ip, container_port, register_id);
+    pub fn setup_container_routing(
+        &self,
+        container_ip: &str,
+        container_port: &str,
+        register_id: u32,
+    ) -> Result<()> {
+        info!(
+            "Setting up container-specific routing for {} (port: {}, reg: {})",
+            container_ip, container_port, register_id
+        );
 
-        let rules = vec![
-            FlowRule {
-                priority: FlowPriority::ContainerSpecific,
-                matches: vec![FlowMatch::IpSrc(container_ip.to_string())],
-                actions: vec![
-                    FlowAction::SetField(format!("{}->reg0", register_id)),
-                    FlowAction::Output(container_port.to_string()),
-                ],
-                comment: format!("Container {} routing via register {}", container_ip, register_id),
-            },
-        ];
+        let rules = vec![FlowRule {
+            priority: FlowPriority::ContainerSpecific,
+            matches: vec![FlowMatch::IpSrc(container_ip.to_string())],
+            actions: vec![
+                FlowAction::SetField(format!("{}->reg0", register_id)),
+                FlowAction::Output(container_port.to_string()),
+            ],
+            comment: format!(
+                "Container {} routing via register {}",
+                container_ip, register_id
+            ),
+        }];
 
         self.add_flows(&rules)
     }
@@ -229,14 +254,12 @@ impl OvsFlowManager {
     pub fn setup_geographic_routing(&self, cidr: &str, output_port: &str) -> Result<()> {
         info!("Setting up geographic routing for {}", cidr);
 
-        let rules = vec![
-            FlowRule {
-                priority: FlowPriority::GeographicRouting,
-                matches: vec![FlowMatch::IpDst(cidr.to_string())],
-                actions: vec![FlowAction::Output(output_port.to_string())],
-                comment: format!("Geographic routing for {}", cidr),
-            },
-        ];
+        let rules = vec![FlowRule {
+            priority: FlowPriority::GeographicRouting,
+            matches: vec![FlowMatch::IpDst(cidr.to_string())],
+            actions: vec![FlowAction::Output(output_port.to_string())],
+            comment: format!("Geographic routing for {}", cidr),
+        }];
 
         self.add_flows(&rules)
     }
@@ -273,31 +296,35 @@ impl OvsFlowManager {
     pub fn setup_ddos_protection(&self, suspicious_cidr: &str, rate_limit: u32) -> Result<()> {
         info!("Setting up DDoS protection for {}", suspicious_cidr);
 
-        let rules = vec![
-            FlowRule {
-                priority: FlowPriority::DdosProtection,
-                matches: vec![FlowMatch::IpSrc(suspicious_cidr.to_string())],
-                actions: vec![FlowAction::RateLimit(rate_limit)],
-                comment: format!("DDoS protection for {}", suspicious_cidr),
-            },
-        ];
+        let rules = vec![FlowRule {
+            priority: FlowPriority::DdosProtection,
+            matches: vec![FlowMatch::IpSrc(suspicious_cidr.to_string())],
+            actions: vec![FlowAction::RateLimit(rate_limit)],
+            comment: format!("DDoS protection for {}", suspicious_cidr),
+        }];
 
         self.add_flows(&rules)
     }
 
     /// Setup VLAN-based isolation
     #[allow(dead_code)]
-    pub fn setup_vlan_isolation(&self, vlan_id: u16, queue_id: u32, output_port: &str) -> Result<()> {
+    pub fn setup_vlan_isolation(
+        &self,
+        vlan_id: u16,
+        queue_id: u32,
+        output_port: &str,
+    ) -> Result<()> {
         info!("Setting up VLAN isolation for VLAN {}", vlan_id);
 
-        let rules = vec![
-            FlowRule {
-                priority: FlowPriority::VlanIsolation,
-                matches: vec![FlowMatch::Vlan(vlan_id)],
-                actions: vec![FlowAction::OutputWithQueue(output_port.to_string(), queue_id)],
-                comment: format!("VLAN {} isolation with QoS", vlan_id),
-            },
-        ];
+        let rules = vec![FlowRule {
+            priority: FlowPriority::VlanIsolation,
+            matches: vec![FlowMatch::Vlan(vlan_id)],
+            actions: vec![FlowAction::OutputWithQueue(
+                output_port.to_string(),
+                queue_id,
+            )],
+            comment: format!("VLAN {} isolation with QoS", vlan_id),
+        }];
 
         self.add_flows(&rules)
     }
@@ -315,7 +342,12 @@ impl OvsFlowManager {
     }
 
     /// Setup basic routing infrastructure
-    pub fn setup_basic_routing(&self, container_network: &str, physical_interface: &str, internal_port: &str) -> Result<()> {
+    pub fn setup_basic_routing(
+        &self,
+        container_network: &str,
+        physical_interface: &str,
+        internal_port: &str,
+    ) -> Result<()> {
         info!("Setting up basic routing infrastructure");
 
         let rules = vec![
@@ -327,7 +359,10 @@ impl OvsFlowManager {
                     FlowMatch::IpSrc(container_network.to_string()),
                 ],
                 actions: vec![FlowAction::Output(physical_interface.to_string())],
-                comment: format!("Container {} -> physical {}", container_network, physical_interface),
+                comment: format!(
+                    "Container {} -> physical {}",
+                    container_network, physical_interface
+                ),
             },
             // Route traffic from physical interface to container network
             FlowRule {
@@ -337,7 +372,10 @@ impl OvsFlowManager {
                     FlowMatch::IpDst(container_network.to_string()),
                 ],
                 actions: vec![FlowAction::Output(internal_port.to_string())],
-                comment: format!("Physical {} -> container {}", physical_interface, container_network),
+                comment: format!(
+                    "Physical {} -> container {}",
+                    physical_interface, container_network
+                ),
             },
             // Allow local traffic within container network
             FlowRule {
@@ -406,7 +444,11 @@ impl OvsFlowManager {
 
     /// Generate container flow rules automatically
     #[allow(dead_code)]
-    pub fn generate_container_flows(&self, container_ip: &str, container_port: u16) -> Vec<FlowRule> {
+    pub fn generate_container_flows(
+        &self,
+        container_ip: &str,
+        container_port: u16,
+    ) -> Vec<FlowRule> {
         vec![
             FlowRule {
                 priority: FlowPriority::ContainerSpecific,
@@ -423,7 +465,10 @@ impl OvsFlowManager {
                     FlowMatch::IpSrc(container_ip.to_string()),
                     FlowMatch::TcpDst(80),
                 ],
-                actions: vec![FlowAction::SetQueue(1), FlowAction::Output(container_port.to_string())],
+                actions: vec![
+                    FlowAction::SetQueue(1),
+                    FlowAction::Output(container_port.to_string()),
+                ],
                 comment: format!("Container {} HTTP priority", container_ip),
             },
             FlowRule {
@@ -432,7 +477,10 @@ impl OvsFlowManager {
                     FlowMatch::IpSrc(container_ip.to_string()),
                     FlowMatch::TcpDst(22),
                 ],
-                actions: vec![FlowAction::SetQueue(0), FlowAction::Output(container_port.to_string())],
+                actions: vec![
+                    FlowAction::SetQueue(0),
+                    FlowAction::Output(container_port.to_string()),
+                ],
                 comment: format!("Container {} SSH normal", container_ip),
             },
         ]

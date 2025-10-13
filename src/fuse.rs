@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
 use log::{debug, info, warn};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
-use serde::{Deserialize, Serialize};
 
 /// FUSE mount point for Proxmox veth interface binding
 const FUSE_MOUNT_BASE: &str = "/var/lib/ovs-port-agent/fuse";
@@ -159,7 +159,10 @@ pub fn bind_veth_interface_enhanced(
     // Store binding information for D-Bus introspection
     store_binding_info(&binding)?;
 
-    info!("Enhanced binding created: {} -> {} (VMID: {})", proxmox_veth, ovs_interface, vmid);
+    info!(
+        "Enhanced binding created: {} -> {} (VMID: {})",
+        proxmox_veth, ovs_interface, vmid
+    );
     Ok(binding)
 }
 

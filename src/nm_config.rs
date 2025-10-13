@@ -1,5 +1,5 @@
-use log::{info, warn};
 use anyhow::{Context, Result};
+use log::{info, warn};
 use std::fs;
 use std::path::Path;
 
@@ -11,31 +11,47 @@ pub fn write_unmanaged_devices(unmanaged: &[String]) -> Result<()> {
         return Ok(());
     }
 
-    info!("Configuring {} interfaces as unmanaged by systemd-networkd", unmanaged.len());
+    info!(
+        "Configuring {} interfaces as unmanaged by systemd-networkd",
+        unmanaged.len()
+    );
 
     let network_dir = Path::new("/etc/systemd/network");
 
     // Ensure network directory exists
     if !network_dir.exists() {
-        fs::create_dir_all(network_dir)
-            .context("creating systemd network directory")?;
+        fs::create_dir_all(network_dir).context("creating systemd network directory")?;
     }
 
     // Remove any existing .network files for unmanaged interfaces
     for interface in unmanaged {
         let network_file = network_dir.join(format!("{}.network", interface));
         if network_file.exists() {
-            fs::remove_file(&network_file)
-                .with_context(|| format!("removing .network file for unmanaged interface {}", interface))?;
-            info!("Removed .network file for unmanaged interface: {}", interface);
+            fs::remove_file(&network_file).with_context(|| {
+                format!(
+                    "removing .network file for unmanaged interface {}",
+                    interface
+                )
+            })?;
+            info!(
+                "Removed .network file for unmanaged interface: {}",
+                interface
+            );
         }
 
         // Also remove any .netdev files that might exist
         let netdev_file = network_dir.join(format!("{}.netdev", interface));
         if netdev_file.exists() {
-            fs::remove_file(&netdev_file)
-                .with_context(|| format!("removing .netdev file for unmanaged interface {}", interface))?;
-            info!("Removed .netdev file for unmanaged interface: {}", interface);
+            fs::remove_file(&netdev_file).with_context(|| {
+                format!(
+                    "removing .netdev file for unmanaged interface {}",
+                    interface
+                )
+            })?;
+            info!(
+                "Removed .netdev file for unmanaged interface: {}",
+                interface
+            );
         }
     }
 

@@ -25,9 +25,7 @@ impl SystemdNetworkdClient {
         .await?;
 
         // Get network interfaces
-        let interfaces: Vec<(u32, String, String, String)> = manager
-            .call("ListLinks", &())
-            .await?;
+        let interfaces: Vec<(u32, String, String, String)> = manager.call("ListLinks", &()).await?;
 
         let mut links = Vec::new();
         for (index, name, _, operational_state) in interfaces {
@@ -38,9 +36,7 @@ impl SystemdNetworkdClient {
             });
         }
 
-        Ok(SystemdNetworkState {
-            links,
-        })
+        Ok(SystemdNetworkState { links })
     }
 
     /// Get detailed information about a specific link
@@ -123,16 +119,17 @@ pub async fn get_comprehensive_network_state() -> Result<serde_json::Value> {
 
     // Try to get systemd-networkd state via D-Bus
     match SystemdNetworkdClient::new().await {
-        Ok(client) => {
-            match client.get_network_state().await {
-                Ok(network_state) => {
-                    state.insert("networkd_links".to_string(), serde_json::json!(network_state.links));
-                }
-                Err(e) => {
-                    warn!("Failed to get networkd state via D-Bus: {}", e);
-                }
+        Ok(client) => match client.get_network_state().await {
+            Ok(network_state) => {
+                state.insert(
+                    "networkd_links".to_string(),
+                    serde_json::json!(network_state.links),
+                );
             }
-        }
+            Err(e) => {
+                warn!("Failed to get networkd state via D-Bus: {}", e);
+            }
+        },
         Err(e) => {
             warn!("Failed to connect to systemd-networkd D-Bus: {}", e);
         }
@@ -142,7 +139,8 @@ pub async fn get_comprehensive_network_state() -> Result<serde_json::Value> {
     if let Ok(output) = tokio::process::Command::new("networkctl")
         .args(["status", "--no-pager"])
         .output()
-        .await {
+        .await
+    {
         let status = String::from_utf8_lossy(&output.stdout);
         state.insert("networkctl_status".to_string(), serde_json::json!(status));
     }
@@ -151,7 +149,8 @@ pub async fn get_comprehensive_network_state() -> Result<serde_json::Value> {
     if let Ok(output) = tokio::process::Command::new("ovs-vsctl")
         .args(["show"])
         .output()
-        .await {
+        .await
+    {
         let ovs_show = String::from_utf8_lossy(&output.stdout);
         state.insert("ovs_bridges".to_string(), serde_json::json!(ovs_show));
     }
@@ -164,7 +163,7 @@ pub async fn get_comprehensive_network_state() -> Result<serde_json::Value> {
 pub async fn is_interface_managed(ifname: &str) -> Result<bool> {
     let client = SystemdNetworkdClient::new().await?;
     let state = client.get_network_state().await?;
-    
+
     Ok(state.links.iter().any(|link| link.name == ifname))
 }
 
@@ -177,8 +176,10 @@ pub async fn reload_networkd() -> Result<()> {
         .await?;
 
     if !output.status.success() {
-        warn!("Failed to reload systemd-networkd: {}", 
-              String::from_utf8_lossy(&output.stderr));
+        warn!(
+            "Failed to reload systemd-networkd: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     Ok(())

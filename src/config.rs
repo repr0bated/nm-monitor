@@ -1,12 +1,12 @@
 //! Configuration management with validation
 
+use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 use validator::Validate;
-use crate::error::{Error, Result};
 
 /// Main configuration structure
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, Default)]
 pub struct Config {
     /// Bridge configuration
     #[validate(nested)]
@@ -155,19 +155,6 @@ pub struct LoggingConfig {
     pub journald: bool,
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            bridge: BridgeConfig::default(),
-            network_manager: NetworkManagerConfig::default(),
-            fuse: FuseConfig::default(),
-            ledger: LedgerConfig::default(),
-            metrics: MetricsConfig::default(),
-            logging: LoggingConfig::default(),
-        }
-    }
-}
-
 impl Default for BridgeConfig {
     fn default() -> Self {
         Self {
@@ -253,14 +240,14 @@ impl Config {
 
         for candidate in candidates {
             if candidate.exists() {
-                let data = fs::read_to_string(&candidate)
-                    .map_err(|e| Error::Io(e))?;
+                let data = fs::read_to_string(&candidate).map_err(Error::Io)?;
                 let cfg: Config = toml::from_str(&data)
                     .map_err(|e| Error::Config(format!("Failed to parse config: {}", e)))?;
 
                 // Validate configuration
-                cfg.validate()
-                    .map_err(|e| Error::Validation(format!("Configuration validation failed: {:?}", e)))?;
+                cfg.validate().map_err(|e| {
+                    Error::Validation(format!("Configuration validation failed: {:?}", e))
+                })?;
 
                 return Ok(cfg);
             }
