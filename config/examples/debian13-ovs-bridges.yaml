@@ -1,0 +1,58 @@
+# OVS Bridge Configuration for Debian 13
+# Creates ovsbr0 and ovsbr1 with specific IPs
+
+version: "1.0"
+
+plugins:
+  net:
+    interfaces:
+      # Primary bridge with uplink
+      - name: ovsbr0
+        type: ovs-bridge
+        ports:
+          - ens1  # Will be auto-detected
+        ipv4:
+          enabled: true
+          dhcp: false
+          address:
+            - ip: 80.209.240.244
+              prefix: 24
+          gateway: 80.209.240.129
+          dns:
+            - 8.8.8.8
+            - 8.8.4.4
+        properties:
+          role: "primary"
+          description: "Main bridge with uplink"
+          stp_enabled: false
+          
+      # Secondary bridge for Docker/Netmaker
+      - name: ovsbr1  
+        type: ovs-bridge
+        ipv4:
+          enabled: true
+          dhcp: false
+          address:
+            - ip: 80.209.242.25
+              prefix: 24
+          gateway: 80.209.242.1
+          dns:
+            - 8.8.8.8
+            - 8.8.4.4
+        properties:
+          role: "docker"
+          description: "Bridge for containers/Netmaker"
+          stp_enabled: false
+          
+      # Physical uplink (will be enslaved to ovsbr0)
+      - name: ens1  # Will be auto-detected
+        type: ethernet
+        controller: ovsbr0
+        ipv4:
+          enabled: false  # IP moves to bridge
+
+  netcfg:
+    dns:
+      hostname: debian13-ovs
+      search_domains:
+        - local

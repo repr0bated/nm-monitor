@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# OVS Bridge Setup for Debian 13 (systemd-networkd)
-# Creates ovsbr0 and ovsbr1 atomically without NetworkManager
-# Supports both D-Bus (gdbus) and ovs-vsctl methods
+# OVS Bridge Setup for Debian 13 using nm-monitor plugins
+# Creates ovsbr0 and ovsbr1 using declarative configuration
 
 set -euo pipefail
 
