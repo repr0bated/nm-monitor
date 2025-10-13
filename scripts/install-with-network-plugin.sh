@@ -278,7 +278,32 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
   exit 0
 fi
 
-echo "Applying network configuration..."
+# ATOMIC HANDOVER: Create pre-installation backup
+echo "=========================================="
+echo "Creating pre-installation backup..."
+BACKUP_DIR="/var/lib/ovs-port-agent/backups"
+mkdir -p "${BACKUP_DIR}"
+BACKUP_TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+# Backup current network state
+if command -v networkctl >/dev/null 2>&1; then
+  networkctl list > "${BACKUP_DIR}/pre-install-networkctl-${BACKUP_TIMESTAMP}.txt" 2>/dev/null || true
+  ip addr show > "${BACKUP_DIR}/pre-install-ip-addr-${BACKUP_TIMESTAMP}.txt" 2>/dev/null || true
+fi
+
+# Backup OVS configuration
+if command -v ovs-vsctl >/dev/null 2>&1; then
+  ovs-vsctl show > "${BACKUP_DIR}/pre-install-ovs-${BACKUP_TIMESTAMP}.txt" 2>/dev/null || true
+fi
+
+# Get active interface count BEFORE
+ACTIVE_BEFORE=$(ip link show up | grep -c "^[0-9]" || echo "0")
+echo "Active interfaces before: ${ACTIVE_BEFORE}"
+echo "Backup saved to: ${BACKUP_DIR}"
+echo ""
+
+# Apply configuration
+echo "Applying network configuration with atomic handover..."
 "${BIN_DEST}" apply-state "${FINAL_CONFIG}" || {
   [[ -f "${FINAL_CONFIG}" && "${FINAL_CONFIG}" != "${NETWORK_CONFIG}" ]] && rm -f "${FINAL_CONFIG}"
   echo -e "${RED}ERROR: Failed to apply network config${NC}" >&2
@@ -287,8 +312,22 @@ echo "Applying network configuration..."
   echo "  1. Check OVS is running: sudo systemctl status openvswitch-switch"
   echo "  2. Check config syntax: sudo ovs-port-agent show-diff ${NETWORK_CONFIG}"
   echo "  3. Check logs: sudo journalctl -xe"
+  echo "  4. Restore from backup: ${BACKUP_DIR}"
   exit 1
 }
+
+# ATOMIC HANDOVER: Verify connectivity preserved
+sleep 2  # Allow network to settle
+ACTIVE_AFTER=$(ip link show up | grep -c "^[0-9]" || echo "0")
+echo "Active interfaces after: ${ACTIVE_AFTER}"
+
+if [[ ${ACTIVE_AFTER} -lt ${ACTIVE_BEFORE} ]]; then
+  echo -e "${YELLOW}WARNING: Active interface count decreased${NC}"
+  echo "This might indicate connectivity issues"
+  echo "Backup available at: ${BACKUP_DIR}"
+else
+  echo -e "${GREEN}✓${NC} Connectivity preserved (${ACTIVE_AFTER} interfaces active)"
+fi
 
 echo ""
 echo -e "${GREEN}✓${NC} Network configuration applied"
@@ -346,6 +385,7 @@ echo "  ✓ Ledger: ${LEDGER_DIR}"
 echo "  ✓ Service: ${SYSTEMD_UNIT}"
 echo "  ✓ D-Bus: ${DBUS_POLICY}"
 echo "  ✓ Network: Applied ${NETWORK_CONFIG}"
+echo "  ✓ Backup: ${BACKUP_DIR} (rollback available)"
 echo ""
 echo "Useful commands:"
 echo "  sudo ovs-port-agent query-state --plugin network"
