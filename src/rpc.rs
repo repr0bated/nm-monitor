@@ -9,14 +9,20 @@ use tracing::{debug, info};
 use zbus::fdo::IntrospectableProxy;
 
 use crate::fuse;
+use crate::ledger::Ledger;
 use crate::ovs_flows::OvsFlowManager;
 use crate::services::{BlockchainService, BridgeService, NetworkStateService, PortManagementService};
+use crate::state::manager::StateManager;
+use crate::state::plugins::NetworkStatePlugin;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Application state shared across D-Bus methods
 pub struct AppState {
     pub bridge: String,
     pub ledger_path: String,
     pub flow_manager: OvsFlowManager,
+    pub state_manager: Option<Arc<StateManager>>,
 }
 
 /// D-Bus interface implementation
@@ -275,6 +281,72 @@ impl PortAgent {
             .map_err(|e| {
                 zbus::fdo::Error::Failed(format!("NetworkManager introspection failed: {}", e))
             })
+    }
+
+    // ========================================================================
+    // Declarative State Management
+    // ========================================================================
+
+    /// Apply declarative state from YAML/JSON
+    fn apply_state(&self, state_yaml: &str) -> zbus::fdo::Result<String> {
+        info!("D-Bus call: apply_state");
+        
+        let state_manager = self.state.state_manager.as_ref()
+            .ok_or_else(|| zbus::fdo::Error::Failed("State manager not initialized".to_string()))?;
+
+        // Parse the desired state
+        let desired_state: crate::state::manager::DesiredState = serde_yaml::from_str(state_yaml)
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Invalid YAML: {}", e)))?;
+
+        // Apply the state
+        let report = tokio::runtime::Handle::current()
+            .block_on(async { state_manager.apply_state(desired_state).await })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Failed to apply state: {}", e)))?;
+
+        Ok(serde_json::to_string_pretty(&report)
+            .unwrap_or_else(|_| "Failed to serialize apply report".to_string()))
+    }
+
+    /// Query current state across all plugins or a specific plugin
+    fn query_state(&self, plugin: &str) -> zbus::fdo::Result<String> {
+        debug!("D-Bus call: query_state({})", plugin);
+        
+        let state_manager = self.state.state_manager.as_ref()
+            .ok_or_else(|| zbus::fdo::Error::Failed("State manager not initialized".to_string()))?;
+
+        let state = tokio::runtime::Handle::current()
+            .block_on(async {
+                if plugin.is_empty() {
+                    state_manager.query_current_state().await
+                        .map(|s| serde_json::to_value(&s).unwrap_or(serde_json::Value::Null))
+                } else {
+                    state_manager.query_plugin_state(plugin).await
+                }
+            })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Failed to query state: {}", e)))?;
+
+        Ok(serde_json::to_string_pretty(&state)
+            .unwrap_or_else(|_| "Failed to serialize state".to_string()))
+    }
+
+    /// Show diff between current and desired state
+    fn show_diff(&self, desired_yaml: &str) -> zbus::fdo::Result<String> {
+        debug!("D-Bus call: show_diff");
+        
+        let state_manager = self.state.state_manager.as_ref()
+            .ok_or_else(|| zbus::fdo::Error::Failed("State manager not initialized".to_string()))?;
+
+        // Parse the desired state
+        let desired_state: crate::state::manager::DesiredState = serde_yaml::from_str(desired_yaml)
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Invalid YAML: {}", e)))?;
+
+        // Calculate diff
+        let diffs = tokio::runtime::Handle::current()
+            .block_on(async { state_manager.show_diff(desired_state).await })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Failed to calculate diff: {}", e)))?;
+
+        Ok(serde_json::to_string_pretty(&diffs)
+            .unwrap_or_else(|_| "Failed to serialize diffs".to_string()))
     }
 
     // ========================================================================
