@@ -9,13 +9,10 @@ use tracing::{debug, info};
 use zbus::fdo::IntrospectableProxy;
 
 use crate::fuse;
-use crate::ledger::Ledger;
 use crate::ovs_flows::OvsFlowManager;
 use crate::services::{BlockchainService, BridgeService, NetworkStateService, PortManagementService};
 use crate::state::manager::StateManager;
-use crate::state::plugins::NetworkStatePlugin;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// Application state shared across D-Bus methods
 pub struct AppState {

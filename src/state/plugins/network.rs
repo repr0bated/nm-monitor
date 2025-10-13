@@ -5,9 +5,8 @@ use crate::state::plugin::{
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashMap;
-use std::process::Command;
 use tokio::process::Command as AsyncCommand;
 
 /// Network configuration schema
