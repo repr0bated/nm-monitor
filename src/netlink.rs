@@ -1,4 +1,4 @@
-use crate::fuse::{bind_veth_interface_enhanced, ensure_fuse_mount_base, unbind_veth_interface_enhanced, InterfaceBinding};
+use crate::fuse::{bind_veth_interface_enhanced, ensure_fuse_mount_base, unbind_veth_interface_enhanced};
 use crate::interfaces::update_interfaces_block;
 use crate::ledger::Ledger;
 use crate::link;

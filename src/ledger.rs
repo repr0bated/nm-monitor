@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use log::{debug, info, warn};
+use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -50,6 +50,7 @@ pub struct BlockchainLedger {
     /// Hash of the last block
     last_hash: String,
     /// Genesis hash for verification
+    #[allow(dead_code)]
     genesis_hash: String,
     /// Registered data source plugins
     plugins: HashMap<String, Box<dyn LedgerPlugin>>,
@@ -58,6 +59,7 @@ pub struct BlockchainLedger {
 /// Plugin trait for different data sources
 pub trait LedgerPlugin: Send + Sync {
     /// Get plugin name/identifier
+    #[allow(dead_code)]
     fn name(&self) -> &str;
     /// Get data categories this plugin handles
     fn categories(&self) -> Vec<String>;
@@ -433,6 +435,7 @@ impl BlockchainLedger {
     }
 
     /// Register custom plugin
+    #[allow(dead_code)]
     pub fn register_plugin(&mut self, plugin: Box<dyn LedgerPlugin>) {
         self.plugins.insert(plugin.name().to_string(), plugin);
     }

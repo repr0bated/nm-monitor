@@ -1,17 +1,18 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use log::{debug, info, warn};
+use std::fs;
 use std::process::Command;
 
+/// Ensure a proactive OVS port exists for an interface using systemd-networkd
 pub fn ensure_proactive_port(bridge: &str, ifname: &str) -> Result<()> {
     let port_name = format!("ovs-port-{}", ifname);
-    let eth_name = format!("ovs-eth-{}", ifname);
 
     info!(
         "Ensuring proactive OVS port {} on bridge {} for interface {}",
         port_name, bridge, ifname
     );
 
-    if is_connection_active(&port_name)? {
+    if port_exists(&port_name)? {
         debug!(
             "OVS port {} already exists and is active, skipping",
             port_name
@@ -19,91 +20,51 @@ pub fn ensure_proactive_port(bridge: &str, ifname: &str) -> Result<()> {
         return Ok(());
     }
 
-    if connection_exists(&port_name)? {
-        debug!("Deleting inactive OVS port {} for recreation", port_name);
-        let _ = Command::new("nmcli")
-            .args(["connection", "delete", &port_name])
-            .output();
-    }
+    // Remove any existing configuration files
+    remove_port_config(&port_name, &format!("ovs-eth-{}", ifname))?;
 
     debug!("Creating OVS port {} on bridge {}", port_name, bridge);
 
-    let output = Command::new("nmcli")
-        .args([
-            "conn",
-            "add",
-            "type",
-            "ovs-port",
-            "con-name",
-            &port_name,
-            "ifname",
-            &port_name,
-            "controller",
-            bridge,
-        ])
-        .output()
-        .context("Failed to create OVS port")?;
-
-    if !output.status.success() {
-        bail!(
-            "Failed to create OVS port {}: {}",
-            port_name,
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    if connection_exists(&eth_name)? {
-        debug!(
-            "Deleting existing ethernet connection {} for recreation",
-            eth_name
-        );
-        let _ = Command::new("nmcli")
-            .args(["connection", "delete", &eth_name])
-            .output();
-    }
-
-    debug!(
-        "Creating ethernet connection {} for port {}",
-        eth_name, port_name
+    // Create .netdev file for the OVS port
+    let port_netdev = format!(
+        "[NetDev]\n\
+         Name={}\n\
+         Kind=ovs-interface\n\
+         \n\
+         [OVSInterface]\n\
+         Type=system\n\
+         Bridge={}\n",
+        port_name, bridge
     );
 
-    let output = Command::new("nmcli")
-        .args([
-            "conn",
-            "add",
-            "type",
-            "ethernet",
-            "con-name",
-            &eth_name,
-            "ifname",
-            ifname,
-            "controller",
-            &port_name,
-            "port-type",
-            "ovs-port",
-        ])
+    let port_netdev_path = format!("/etc/systemd/network/{}.netdev", port_name);
+    fs::write(&port_netdev_path, port_netdev)
+        .with_context(|| format!("writing port .netdev for {}", port_name))?;
+
+    // Create .network file for the ethernet interface
+    let eth_name = format!("ovs-eth-{}", ifname);
+    let eth_network = format!(
+        "[Match]\n\
+         Name={}\n\
+         \n\
+         [Network]\n\
+         Bridge={}\n",
+        ifname, bridge
+    );
+
+    let eth_network_path = format!("/etc/systemd/network/{}.network", eth_name);
+    fs::write(&eth_network_path, eth_network)
+        .with_context(|| format!("writing ethernet .network for {}", eth_name))?;
+
+    // Reload networkd
+    let output = Command::new("networkctl")
+        .args(["reload"])
         .output()
-        .context("Failed to create ethernet connection")?;
-
-    if !output.status.success() {
-        bail!(
-            "Failed to create ethernet slave {}: {}",
-            eth_name,
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    debug!("Activating ethernet connection {}", eth_name);
-
-    let output = Command::new("nmcli")
-        .args(["-w", "10", "connection", "up", &eth_name])
-        .output()
-        .context("Failed to activate ethernet connection")?;
+        .context("Failed to reload systemd-networkd")?;
 
     if !output.status.success() {
         warn!(
-            "Failed to activate ethernet connection {}: {}",
-            eth_name,
+            "Failed to reload systemd-networkd: {}",
             String::from_utf8_lossy(&output.stderr)
         );
     }
@@ -115,58 +76,63 @@ pub fn ensure_proactive_port(bridge: &str, ifname: &str) -> Result<()> {
     Ok(())
 }
 
+/// Remove proactive OVS port configuration
 pub fn remove_proactive_port(port_name: &str, eth_name: &str) -> Result<()> {
     info!(
         "Removing proactive OVS port {} and ethernet {}",
         port_name, eth_name
     );
 
-    if connection_exists(eth_name)? {
-        debug!("Deactivating ethernet connection {}", eth_name);
-        let _ = Command::new("nmcli")
-            .args(["connection", "down", eth_name])
-            .output();
-        let _ = Command::new("nmcli")
-            .args(["connection", "delete", eth_name])
-            .output();
-    }
+    remove_port_config(port_name, eth_name)?;
 
-    if connection_exists(port_name)? {
-        debug!("Deleting OVS port {}", port_name);
-        let _ = Command::new("nmcli")
-            .args(["connection", "delete", port_name])
-            .output();
+    // Reload networkd
+    let output = Command::new("networkctl")
+        .args(["reload"])
+        .output()
+        .context("Failed to reload systemd-networkd after port removal")?;
+
+    if !output.status.success() {
+        warn!(
+            "Failed to reload systemd-networkd: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     info!("Successfully removed proactive port connections");
     Ok(())
 }
 
-fn connection_exists(name: &str) -> Result<bool> {
-    let output = Command::new("nmcli")
-        .args(["-t", "-f", "NAME", "connection", "show", name])
+/// Check if a network interface exists in systemd-networkd
+fn port_exists(name: &str) -> Result<bool> {
+    let output = Command::new("networkctl")
+        .args(["list", "--no-pager", "--no-legend"])
         .output()
-        .context("Failed to check connection existence")?;
-
-    Ok(output.status.success())
-}
-
-fn is_connection_active(name: &str) -> Result<bool> {
-    let output = Command::new("nmcli")
-        .args(["-t", "-f", "NAME,STATE", "connection", "show", "--active"])
-        .output()
-        .context("Failed to check active connections")?;
+        .context("Failed to list network interfaces")?;
 
     if !output.status.success() {
         return Ok(false);
     }
 
-    let active_conns = String::from_utf8_lossy(&output.stdout);
-    for line in active_conns.lines() {
-        let parts: Vec<&str> = line.split(':').collect();
-        if parts.len() >= 2 && parts[0] == name && parts[1] == "activated" {
-            return Ok(true);
+    let networks = String::from_utf8_lossy(&output.stdout);
+    Ok(networks.lines().any(|line| line.contains(name)))
+}
+
+/// Remove configuration files for a port
+fn remove_port_config(port_name: &str, eth_name: &str) -> Result<()> {
+    let files_to_remove = vec![
+        format!("/etc/systemd/network/{}.netdev", port_name),
+        format!("/etc/systemd/network/{}.network", port_name),
+        format!("/etc/systemd/network/{}.netdev", eth_name),
+        format!("/etc/systemd/network/{}.network", eth_name),
+    ];
+
+    for file in files_to_remove {
+        if std::path::Path::new(&file).exists() {
+            fs::remove_file(&file)
+                .with_context(|| format!("removing config file {}", file))?;
+            debug!("Removed config file: {}", file);
         }
     }
-    Ok(false)
+
+    Ok(())
 }

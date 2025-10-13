@@ -3,17 +3,19 @@ use log::{info, debug, warn};
 use std::future;
 use zbus::{fdo::IntrospectableProxy, ConnectionBuilder};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::json;
 
 // use crate::ledger::Ledger; // reserved for future action logging via DBus
 use crate::nm_query;
 use crate::fuse::{self, InterfaceBinding};
-use crate::ledger::{BlockchainLedger, Block, BlockchainStats};
+use crate::ledger::BlockchainLedger;
+use crate::ovs_flows::OvsFlowManager;
 // use std::path::PathBuf; // reserved for future file parameterization
 
 pub struct AppState {
     pub bridge: String,
     pub ledger_path: String,
+    pub flow_manager: OvsFlowManager,
 }
 pub struct PortAgent {
     state: AppState,
@@ -98,9 +100,9 @@ impl PortAgent {
         Ok(format!("Container interface {} removed", name))
     }
 
-    fn introspect_network_manager(&self) -> zbus::fdo::Result<String> {
-        match tokio::runtime::Handle::current().block_on(async { introspect_nm().await }) {
-            Ok(_) => Ok("NetworkManager introspection completed successfully".to_string()),
+    fn introspect_systemd_networkd(&self) -> zbus::fdo::Result<String> {
+        match tokio::runtime::Handle::current().block_on(async { introspect_systemd_networkd().await }) {
+            Ok(_) => Ok("systemd-networkd introspection completed successfully".to_string()),
             Err(e) => Err(zbus::fdo::Error::Failed(format!(
                 "NetworkManager introspection failed: {}",
                 e
@@ -111,7 +113,7 @@ impl PortAgent {
     /// Get comprehensive system network state
     fn get_system_network_state(&self) -> zbus::fdo::Result<String> {
         let state = tokio::runtime::Handle::current()
-            .block_on(async { get_comprehensive_network_state().await })
+            .block_on(async { crate::systemd_dbus::get_comprehensive_network_state().await })
             .map_err(|e| zbus::fdo::Error::Failed(format!("Failed to get network state: {}", e)))?;
 
         Ok(serde_json::to_string_pretty(&state)
@@ -158,7 +160,7 @@ impl PortAgent {
 
     /// Get blockchain ledger statistics
     fn get_blockchain_stats(&self) -> zbus::fdo::Result<String> {
-        let mut ledger = tokio::runtime::Handle::current()
+        let ledger = tokio::runtime::Handle::current()
             .block_on(async {
                 BlockchainLedger::new(self.state.ledger_path.clone().into())
             })
@@ -173,7 +175,7 @@ impl PortAgent {
 
     /// Get blockchain blocks by category
     fn get_blocks_by_category(&self, category: &str) -> zbus::fdo::Result<String> {
-        let mut ledger = tokio::runtime::Handle::current()
+        let ledger = tokio::runtime::Handle::current()
             .block_on(async {
                 BlockchainLedger::new(self.state.ledger_path.clone().into())
             })
@@ -188,7 +190,7 @@ impl PortAgent {
 
     /// Get blockchain blocks by height range
     fn get_blocks_by_height(&self, start: u64, end: u64) -> zbus::fdo::Result<String> {
-        let mut ledger = tokio::runtime::Handle::current()
+        let ledger = tokio::runtime::Handle::current()
             .block_on(async {
                 BlockchainLedger::new(self.state.ledger_path.clone().into())
             })
@@ -203,7 +205,7 @@ impl PortAgent {
 
     /// Verify blockchain integrity
     fn verify_blockchain_integrity(&self) -> zbus::fdo::Result<String> {
-        let mut ledger = tokio::runtime::Handle::current()
+        let ledger = tokio::runtime::Handle::current()
             .block_on(async {
                 BlockchainLedger::new(self.state.ledger_path.clone().into())
             })
@@ -234,7 +236,7 @@ impl PortAgent {
 
     /// Get specific block by hash
     fn get_block_by_hash(&self, hash: &str) -> zbus::fdo::Result<String> {
-        let mut ledger = tokio::runtime::Handle::current()
+        let ledger = tokio::runtime::Handle::current()
             .block_on(async {
                 BlockchainLedger::new(self.state.ledger_path.clone().into())
             })
@@ -247,6 +249,45 @@ impl PortAgent {
             Some(b) => Ok(serde_json::to_string_pretty(&b)
                 .unwrap_or_else(|_| "Failed to serialize block".to_string())),
             None => Ok("Block not found".to_string()),
+        }
+}
+/// Clear all OVS flow rules
+    fn clear_flows(&self) -> zbus::fdo::Result<String> {
+        match self.state.flow_manager.clear_all_flows() {
+            Ok(_) => Ok("All OVS flows cleared successfully".to_string()),
+            Err(e) => Err(zbus::fdo::Error::Failed(format!("Failed to clear flows: {}", e))),
+        }
+    }
+
+    /// Setup container-specific routing
+    fn setup_container_routing(&self, container_ip: &str, container_port: &str, register_id: u32) -> zbus::fdo::Result<String> {
+        match self.state.flow_manager.setup_container_routing(container_ip, container_port, register_id) {
+            Ok(_) => Ok(format!("Container routing setup for {} via register {}", container_ip, register_id)),
+            Err(e) => Err(zbus::fdo::Error::Failed(format!("Failed to setup container routing: {}", e))),
+        }
+    }
+
+    /// Setup application-aware routing
+    fn setup_application_routing(&self, output_port: &str) -> zbus::fdo::Result<String> {
+        match self.state.flow_manager.setup_application_routing(output_port) {
+            Ok(_) => Ok("Application-aware routing setup successfully".to_string()),
+            Err(e) => Err(zbus::fdo::Error::Failed(format!("Failed to setup application routing: {}", e))),
+        }
+    }
+
+    /// Setup basic container network routing
+    fn setup_basic_routing(&self, container_network: &str, physical_interface: &str, internal_port: &str) -> zbus::fdo::Result<String> {
+        match self.state.flow_manager.setup_basic_routing(container_network, physical_interface, internal_port) {
+            Ok(_) => Ok(format!("Basic routing setup for container network {}", container_network)),
+            Err(e) => Err(zbus::fdo::Error::Failed(format!("Failed to setup basic routing: {}", e))),
+        }
+    }
+
+    /// Dump current flow rules
+    fn dump_flows(&self) -> zbus::fdo::Result<String> {
+        match self.state.flow_manager.dump_flows() {
+            Ok(flows) => Ok(flows),
+            Err(e) => Err(zbus::fdo::Error::Failed(format!("Failed to dump flows: {}", e))),
         }
     }
 }
@@ -265,13 +306,13 @@ pub async fn serve_with_state(state: AppState) -> Result<()> {
     Ok(())
 }
 
-pub async fn introspect_nm() -> Result<()> {
-    info!("Performing comprehensive D-Bus introspection on NetworkManager");
+pub async fn introspect_systemd_networkd() -> Result<()> {
+    info!("Performing comprehensive D-Bus introspection on systemd-networkd");
     let conn = zbus::Connection::system().await?;
     introspect_object(
         &conn,
-        "org.freedesktop.NetworkManager",
-        "/org/freedesktop/NetworkManager",
+        "org.freedesktop.network1",
+        "/org/freedesktop/network1",
     )
     .await?;
     Ok(())
@@ -302,6 +343,7 @@ async fn introspect_object(
 
 /// Comprehensive network state for system-wide control
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct NetworkState {
     pub networkmanager: NetworkManagerState,
     pub ovs_bridges: Vec<OVSBridgeState>,
@@ -311,6 +353,7 @@ pub struct NetworkState {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct NetworkManagerState {
     pub version: String,
     pub state: String,
@@ -321,6 +364,7 @@ pub struct NetworkManagerState {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct OVSBridgeState {
     pub name: String,
     pub ports: Vec<String>,
@@ -330,6 +374,7 @@ pub struct OVSBridgeState {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct ConnectivityStatus {
     pub internet_reachable: bool,
     pub dns_working: bool,
@@ -337,6 +382,7 @@ pub struct ConnectivityStatus {
     pub uplink_status: String,
 }
 
+#[allow(dead_code)]
 async fn get_comprehensive_network_state() -> Result<NetworkState> {
     let mut nm_state = NetworkManagerState {
         version: "unknown".to_string(),
@@ -348,7 +394,7 @@ async fn get_comprehensive_network_state() -> Result<NetworkState> {
     };
 
     // Get NetworkManager state via nmcli
-    if let Ok(output) = tokio::process::Command::new("nmcli")
+    if let Ok(output) = tokio::process::Command::new("networkctl")
         .args(["--version"])
         .output().await {
         if let Ok(version) = String::from_utf8(output.stdout) {
@@ -356,7 +402,7 @@ async fn get_comprehensive_network_state() -> Result<NetworkState> {
         }
     }
 
-    if let Ok(output) = tokio::process::Command::new("nmcli")
+    if let Ok(output) = tokio::process::Command::new("networkctl")
         .args(["-t", "-f", "STATE", "general"])
         .output().await {
         if let Ok(state) = String::from_utf8(output.stdout) {
@@ -364,7 +410,7 @@ async fn get_comprehensive_network_state() -> Result<NetworkState> {
         }
     }
 
-    if let Ok(output) = tokio::process::Command::new("nmcli")
+    if let Ok(output) = tokio::process::Command::new("networkctl")
         .args(["-t", "-f", "CONNECTIVITY", "general"])
         .output().await {
         if let Ok(connectivity) = String::from_utf8(output.stdout) {
@@ -372,21 +418,21 @@ async fn get_comprehensive_network_state() -> Result<NetworkState> {
         }
     }
 
-    if let Ok(output) = tokio::process::Command::new("nmcli")
-        .args(["-t", "-f", "NAME", "connection", "show", "--active"])
+    if let Ok(output) = tokio::process::Command::new("networkctl")
+        .args(["list", "--no-pager"])
         .output().await {
         let count = String::from_utf8_lossy(&output.stdout).lines().count();
         nm_state.active_connections = count as u32;
     }
 
-    if let Ok(output) = tokio::process::Command::new("nmcli")
+    if let Ok(output) = tokio::process::Command::new("networkctl")
         .args(["-t", "-f", "NAME", "connection", "show"])
         .output().await {
         let count = String::from_utf8_lossy(&output.stdout).lines().count();
         nm_state.total_connections = count as u32;
     }
 
-    if let Ok(output) = tokio::process::Command::new("nmcli")
+    if let Ok(output) = tokio::process::Command::new("networkctl")
         .args(["-t", "device", "status"])
         .output().await {
         let count = String::from_utf8_lossy(&output.stdout).lines().count();
@@ -411,6 +457,7 @@ async fn get_comprehensive_network_state() -> Result<NetworkState> {
     })
 }
 
+#[allow(dead_code)]
 async fn get_ovs_bridge_states() -> Result<Vec<OVSBridgeState>> {
     let mut bridges = Vec::new();
 
@@ -456,7 +503,7 @@ async fn get_ovs_bridge_states() -> Result<Vec<OVSBridgeState>> {
             }
 
             // Check if bridge is active (has NetworkManager connection)
-            if let Ok(output) = tokio::process::Command::new("nmcli")
+            if let Ok(output) = tokio::process::Command::new("networkctl")
                 .args(["-t", "-f", "NAME,STATE", "connection", "show"])
                 .output().await {
                 let connections = String::from_utf8_lossy(&output.stdout);
@@ -476,6 +523,7 @@ async fn get_ovs_bridge_states() -> Result<Vec<OVSBridgeState>> {
     Ok(bridges)
 }
 
+#[allow(dead_code)]
 async fn get_connectivity_status() -> Result<ConnectivityStatus> {
     let mut status = ConnectivityStatus {
         internet_reachable: false,
@@ -507,7 +555,7 @@ async fn get_connectivity_status() -> Result<ConnectivityStatus> {
     }
 
     // Get uplink status (first non-lo interface)
-    if let Ok(output) = tokio::process::Command::new("nmcli")
+    if let Ok(output) = tokio::process::Command::new("networkctl")
         .args(["-t", "-f", "DEVICE,STATE", "device", "status"])
         .output().await {
         let devices = String::from_utf8_lossy(&output.stdout);
@@ -535,18 +583,18 @@ async fn validate_bridge_connectivity(bridge: &str) -> Result<serde_json::Value>
 
     validation.insert("ovs_bridge_exists".to_string(), json!(ovs_exists));
 
-    // Validate NetworkManager connection exists
-    let nm_exists = tokio::process::Command::new("nmcli")
-        .args(["-t", "connection", "show", bridge])
+    // Validate systemd-networkd configuration exists
+    let systemd_exists = tokio::process::Command::new("networkctl")
+        .args(["status", bridge, "--no-pager"])
         .output().await
         .map(|output| output.status.success())
         .unwrap_or(false);
 
-    validation.insert("nm_connection_exists".to_string(), json!(nm_exists));
+    validation.insert("systemd_network_exists".to_string(), json!(systemd_exists));
 
     // Validate bridge is active
-    let bridge_active = tokio::process::Command::new("nmcli")
-        .args(["-t", "-f", "GENERAL.STATE", "connection", "show", bridge])
+    let bridge_active = tokio::process::Command::new("networkctl")
+        .args(["status", bridge, "--no-pager"])
         .output().await
         .map(|output| {
             let state = String::from_utf8_lossy(&output.stdout);
@@ -578,16 +626,16 @@ async fn validate_connectivity_preservation() -> Result<bool> {
         essential_checks.push(result.status.success());
     }
 
-    // Check if NetworkManager is responsive
-    if let Ok(result) = tokio::process::Command::new("nmcli")
-        .args(["general", "status"])
+    // Check if systemd-networkd is responsive
+    if let Ok(result) = tokio::process::Command::new("networkctl")
+        .args(["status"])
         .output().await {
         essential_checks.push(result.status.success());
     }
 
     // Check if we have active connections
-    if let Ok(output) = tokio::process::Command::new("nmcli")
-        .args(["-t", "-f", "NAME", "connection", "show", "--active"])
+    if let Ok(output) = tokio::process::Command::new("networkctl")
+        .args(["list", "--no-pager"])
         .output().await {
         let active_count = String::from_utf8_lossy(&output.stdout).lines().count();
         essential_checks.push(active_count > 0);
@@ -602,8 +650,8 @@ async fn perform_atomic_bridge_operation(bridge: &str, operation: &str) -> Resul
 
     match operation {
         "create_checkpoint" => {
-            // Create NetworkManager checkpoint for rollback
-            let checkpoint_path = create_nm_checkpoint().await?;
+            // Create systemd-networkd configuration backup
+            let checkpoint_path = create_systemd_backup().await?;
             Ok(format!("Checkpoint created: {}", checkpoint_path))
         }
         "validate_topology" => {
@@ -622,34 +670,42 @@ async fn perform_atomic_bridge_operation(bridge: &str, operation: &str) -> Resul
     }
 }
 
-async fn create_nm_checkpoint() -> Result<String> {
-    let conn = zbus::Connection::system().await?;
-
-    let device_paths = get_nm_device_paths(&conn).await?;
-    if device_paths.is_empty() {
-        return Err(anyhow::anyhow!("No NetworkManager devices found for checkpoint"));
+async fn create_systemd_backup() -> Result<String> {
+    // Create a backup of current systemd network configuration
+    let backup_dir = format!("/tmp/systemd-network-backup-{}", 
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs());
+    
+    std::fs::create_dir_all(&backup_dir)?;
+    
+    // Copy all .network and .netdev files
+    let network_dir = std::path::Path::new("/etc/systemd/network");
+    if network_dir.exists() {
+        for entry in std::fs::read_dir(network_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if let Some(ext) = path.extension() {
+                if ext == "network" || ext == "netdev" {
+                    let file_name = path.file_name().unwrap();
+                    let dest = std::path::Path::new(&backup_dir).join(file_name);
+                    std::fs::copy(&path, &dest)?;
+                }
+            }
+        }
     }
-
-    let proxy = zbus::Proxy::new(
-        &conn,
-        "org.freedesktop.NetworkManager",
-        "/org/freedesktop/NetworkManager",
-        "org.freedesktop.NetworkManager",
-    ).await?;
-
-    let checkpoint_path: String = proxy
-        .call("CheckpointCreate", &(vec![device_paths], 600u32))
-        .await?;
-
-    Ok(checkpoint_path)
+    
+    Ok(backup_dir)
 }
 
+#[allow(dead_code)]
 async fn get_nm_device_paths(conn: &zbus::Connection) -> Result<Vec<String>> {
     let proxy = zbus::Proxy::new(
         conn,
-        "org.freedesktop.NetworkManager",
-        "/org/freedesktop/NetworkManager",
-        "org.freedesktop.NetworkManager",
+        "org.freedesktop.network1",
+        "/org/freedesktop/network1",
+        "org.freedesktop.network1",
     ).await?;
 
     let devices: Vec<zbus::zvariant::OwnedObjectPath> = proxy
@@ -674,8 +730,8 @@ async fn validate_bridge_topology(bridge: &str) -> Result<bool> {
     }
 
     // Check NetworkManager level
-    let nm_valid = tokio::process::Command::new("nmcli")
-        .args(["-t", "connection", "show", bridge])
+    let nm_valid = tokio::process::Command::new("networkctl")
+        .args(["status", bridge, "--no-pager"])
         .output().await
         .map(|output| output.status.success())
         .unwrap_or(false);
@@ -733,11 +789,11 @@ async fn get_bridge_topology(bridge: &str) -> Result<serde_json::Value> {
     }
 
     // NetworkManager connection details
-    if let Ok(output) = tokio::process::Command::new("nmcli")
-        .args(["connection", "show", bridge])
+    if let Ok(output) = tokio::process::Command::new("networkctl")
+        .args(["status", bridge, "--no-pager"])
         .output().await {
-        let nm_details = String::from_utf8_lossy(&output.stdout);
-        topology.insert("nm_connection".to_string(), json!(nm_details));
+        let systemd_details = String::from_utf8_lossy(&output.stdout);
+        topology.insert("systemd_network".to_string(), json!(systemd_details));
     }
 
     // Bridge ports and interfaces

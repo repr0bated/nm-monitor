@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use log::{debug, info, warn};
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
@@ -23,6 +23,7 @@ pub struct InterfaceBinding {
     pub bind_mount: String,
 }
 
+#[allow(dead_code)]
 type BindingMap = Arc<Mutex<HashMap<String, InterfaceBinding>>>;
 
 /// Ensure FUSE mount point directory exists

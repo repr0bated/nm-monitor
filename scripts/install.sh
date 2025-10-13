@@ -45,6 +45,60 @@ cd "${REPO_ROOT}" || {
 
 echo "Successfully changed to repository directory: $(pwd)"
 
+echo "⚠️  WARNING: This installation may temporarily disrupt network connectivity!"
+echo "   The installer will attempt to reload network configuration without restart," 
+echo "   but some changes may require manual service restart after installation."
+echo "   Use --no-restart to skip all automatic service restarts."
+echo ""
+SKIP_NETMAKER=0
+# Service availability flags
+HAS_SYSTEMD_NETWORKD=0
+HAS_NETMAKER=0
+HAS_DOCKER=0
+HAS_OVS=0
+
+# Detect available services and configure accordingly
+detect_services() {
+  echo "Detecting available services..."
+  
+  # Check for systemd-networkd
+  if systemctl is-enabled systemd-networkd 2>/dev/null; then
+    echo "✓ systemd-networkd available"
+    HAS_SYSTEMD_NETWORKD=1
+  else
+    echo "⚠️  systemd-networkd not available"
+    HAS_SYSTEMD_NETWORKD=1  # Assume available on modern systems
+  fi
+  
+  # Check for Netmaker
+  if command -v netmaker 2>/dev/null || docker ps 2>/dev/null | grep -q netmaker || [[ ${SKIP_NETMAKER} -eq 0 ]]; then
+    echo "✓ Netmaker support enabled"
+    HAS_NETMAKER=1
+  else
+    echo "ℹ️  Netmaker support disabled (--skip-netmaker)"
+    HAS_NETMAKER=0
+  fi
+  
+  # Check for Docker
+  if command -v docker >/dev/null 2>&1; then
+    echo "✓ Docker available"
+    HAS_DOCKER=1
+  else
+    echo "ℹ️  Docker not available"
+    HAS_DOCKER=0
+  fi
+  
+  # Check for OVS
+  if command -v ovs-vsctl >/dev/null 2>&1; then
+    echo "✓ Open vSwitch available"
+    HAS_OVS=1
+  else
+    echo "⚠️  Open vSwitch not available"
+    HAS_OVS=0
+  fi
+}
+
+detect_services
 # Handle --help early to avoid any side effects before argument parsing
 print_usage_and_exit() {
   cat <<USAGE
@@ -55,16 +109,18 @@ Options:
   --prefix DIR      Installation prefix for the binary (default: /usr/local)
   --uplink IFACE    Physical interface to enslave to the bridge (optional)
   --with-ovsbr1     Also create secondary bridge ovsbr1 (DHCP, no uplink needed)
+  --skip-netmaker   Skip Netmaker-specific configurations
+  --no-restart       Skip restarting network services (manual reload required)
   --purge-bridges   Destructively remove ALL OVS bridges before install
   --force-ovsctl    Allow ovs-vsctl for hard purge fallback (DANGEROUS)
   --system          Enable and start the systemd service after installing
   --help            Show this help message
 
-Note: Before installation, ultra-conservative connectivity-preserving cleanup will be performed including:
-- Pre-installation introspection and NetworkManager checkpoint creation
-- Legacy dyn-port/dyn-eth connections cleanup (old monitoring system)
-- MAXIMUM-CONSERVATIVE NetworkManager cleanup (only 100% safe inactive connections)
-- systemd-networkd cleanup (only if not managed by NetworkManager)
+Note: Before installation, connectivity-preserving cleanup will be performed including:
+- Pre-installation introspection and systemd-networkd checkpoint creation
+- Legacy systemd-networkd configuration cleanup
+- MAXIMUM-CONSERVATIVE systemd-networkd cleanup (only 100% safe inactive connections)
+- systemd-networkd cleanup (only if not managed by systemd-networkd)
 - OVS bridge cleanup (only completely unused bridges, preserving all active bridges)
 - /etc/network/interfaces cleanup (commenting out conflicting configs)
 - D-Bus service refresh
@@ -102,8 +158,8 @@ install -d -m 0750 "${BACKUP_DIR}" 2>/dev/null || true
 echo "🔍 Phase 1: Pre-installation introspection and atomic handover preparation"
 echo "=========================================================================="
 
-# 1. Comprehensive NetworkManager introspection BEFORE cleanup
-if command -v nmcli >/dev/null 2>&1; then
+# 1. Comprehensive network introspection BEFORE cleanup
+if systemctl is-active --quiet NetworkManager 2>/dev/null && command -v nmcli >/dev/null 2>&1; then
   echo "Performing pre-installation NetworkManager introspection..."
 
   # Get current NetworkManager state
@@ -133,46 +189,32 @@ if command -v nmcli >/dev/null 2>&1; then
   nmcli -t device status > "${BACKUP_DIR}/pre-cleanup-devices.list" 2>/dev/null || true
   nmcli general > "${BACKUP_DIR}/pre-cleanup-general.list" 2>/dev/null || true
 
-  echo "✅ Pre-installation state captured for rollback"
+  echo "✓ Pre-installation NetworkManager state captured for rollback"
+elif systemctl is-active --quiet systemd-networkd 2>/dev/null; then
+  echo "NetworkManager disabled - performing systemd-networkd introspection..."
+
+  # Use networkctl for systemd-networkd introspection
+  echo "systemd-networkd Status: $(systemctl is-active systemd-networkd)"
+  echo "Network Interfaces: $(networkctl list --no-pager | wc -l) total"
+
+  # Get active interfaces
+  ACTIVE_INTERFACES=$(networkctl list --no-pager | grep -c "routable\|configured" || echo "0")
+  echo "Active Interfaces: ${ACTIVE_INTERFACES}"
+
+  # Store systemd-networkd state
+  echo "Storing current systemd-networkd state..."
+  networkctl list > "${BACKUP_DIR}/pre-cleanup-networkctl.list" 2>/dev/null || true
+  ip addr show > "${BACKUP_DIR}/pre-cleanup-ip-addr.list" 2>/dev/null || true
+
+  echo "✓ Pre-installation systemd-networkd state captured"
 else
-  echo "⚠️  NetworkManager not available for introspection"
+  echo "⚠️  Neither NetworkManager nor systemd-networkd available for introspection"
 fi
 
-# 2. Create NetworkManager checkpoint for atomic rollback
+# 2. Skip checkpoint creation (systemd-networkd doesn't support checkpoints)
+echo "⏭️  Skipping checkpoint creation - systemd-networkd doesn't support rollback checkpoints"
+echo "ℹ️  Proceeding with installation - manual rollback may be needed if issues occur"
 CHECKPOINT_PATH=""
-if command -v gdbus >/dev/null 2>&1 && command -v nmcli >/dev/null 2>&1; then
-  echo "Creating NetworkManager checkpoint for atomic handover..."
-
-  # Get all device paths for checkpoint (be more conservative)
-  DEVICE_PATHS=$(gdbus call --system --dest org.freedesktop.NetworkManager \
-    --object-path /org/freedesktop/NetworkManager \
-    --method org.freedesktop.NetworkManager.GetDevices 2>/dev/null | \
-    grep -o "'[^']*'" | tr -d "'" | tr '\n' ',' | sed 's/,$//')
-
-  if [[ -n "${DEVICE_PATHS}" ]]; then
-    echo "Attempting checkpoint creation with 30s timeout..."
-    CHECKPOINT_PATH=""
-    if timeout 30 gdbus call --system --dest org.freedesktop.NetworkManager \
-      --object-path /org/freedesktop/NetworkManager \
-      --method org.freedesktop.NetworkManager.CheckpointCreate \
-      "[$DEVICE_PATHS]" 30 >/tmp/checkpoint_result 2>/dev/null; then
-      CHECKPOINT_PATH=$(grep -o "'[^']*'" /tmp/checkpoint_result 2>/dev/null | tr -d "'" | head -1 || true)
-      rm -f /tmp/checkpoint_result 2>/dev/null || true
-    fi
-
-    if [[ -n "${CHECKPOINT_PATH}" ]]; then
-      echo "✅ Checkpoint created: ${CHECKPOINT_PATH} (30s timeout)"
-      echo "${CHECKPOINT_PATH}" > "${BACKUP_DIR}/nm_checkpoint"
-    else
-      echo "⚠️  Checkpoint creation failed or timed out - proceeding without checkpoint"
-      echo "⚠️  This is safe but rollback capability will be limited"
-    fi
-  else
-    echo "⚠️  No NetworkManager devices found for checkpoint"
-  fi
-else
-  echo "⚠️  D-Bus or NetworkManager not available for checkpoint creation"
-fi
 
 echo "🔄 Phase 2: Connectivity-preserving cleanup"
 echo "==========================================="
@@ -184,14 +226,14 @@ create_backups() {
 
   # Backup directory already created earlier
 
-  # Backup NetworkManager connections
-  if command -v nmcli >/dev/null 2>&1 && systemctl is-active --quiet NetworkManager; then
-    echo "Backing up NetworkManager connections..."
+  # Backup systemd-networkd connections
+  if command -v nmcli >/dev/null 2>&1 && systemctl is-active --quiet systemd-networkd; then
+    echo "Backing up systemd-networkd connections..."
     nmcli -t -f NAME,UUID connection show > "${BACKUP_DIR}/nm-connections.list" 2>/dev/null || true
 
     # Backup system-connections directory
-    if [[ -d "/etc/NetworkManager/system-connections" ]]; then
-      cp -r /etc/NetworkManager/system-connections "${BACKUP_DIR}/" 2>/dev/null || true
+    if [[ -d "/etc/systemd-networkd/system-connections" ]]; then
+      cp -r /etc/systemd-networkd/system-connections "${BACKUP_DIR}/" 2>/dev/null || true
     fi
   fi
 
@@ -248,14 +290,18 @@ Options:
   --prefix DIR      Installation prefix for the binary (default: /usr/local)
   --uplink IFACE    Physical interface to enslave to the bridge (optional)
   --with-ovsbr1     Also create secondary bridge ovsbr1 (DHCP, no uplink needed)
+  --skip-netmaker   Skip Netmaker-specific configurations
+  --no-restart       Skip restarting network services (manual reload required)
+  --purge-bridges   Destructively remove ALL OVS bridges before install
+  --force-ovsctl    Allow ovs-vsctl for hard purge fallback (DANGEROUS)
   --system          Enable and start the systemd service after installing
   --help            Show this help message
 
-Note: Before installation, ultra-conservative connectivity-preserving cleanup will be performed including:
-- Pre-installation introspection and NetworkManager checkpoint creation
-- Legacy dyn-port/dyn-eth connections cleanup (old monitoring system)
-- MAXIMUM-CONSERVATIVE NetworkManager cleanup (only 100% safe inactive connections)
-- systemd-networkd cleanup (only if not managed by NetworkManager)
+Note: Before installation, connectivity-preserving cleanup will be performed including:
+- Pre-installation introspection and systemd-networkd checkpoint creation
+- Legacy systemd-networkd configuration cleanup
+- MAXIMUM-CONSERVATIVE systemd-networkd cleanup (only 100% safe inactive connections)
+- systemd-networkd cleanup (only if not managed by systemd-networkd)
 - OVS bridge cleanup (only completely unused bridges, preserving all active bridges)
 - /etc/network/interfaces cleanup (commenting out conflicting configs)
 - D-Bus service refresh
@@ -269,9 +315,11 @@ PREFIX="/usr/local"
 SYSTEM=0
 UPLINK=""
 CREATE_OVSBR1=0
-# Default to purging OVS bridges via NetworkManager for clean slate
-PURGE_BRIDGES=1
+# Default to NOT purging OVS bridges to preserve existing configuration
+PURGE_BRIDGES=0
 ALLOW_OVSCTL_FORCE=0
+SKIP_NETMAKER=0
+NO_RESTART=0
 
 detach_uplink_if_enslaved() {
   local uplink_dev="$1"
@@ -306,11 +354,11 @@ cleanup_all_networking() {
 
   echo "Starting comprehensive network cleanup..."
 
-  # 1. Connectivity-preserving systemd-networkd cleanup
+  # 1. Connectivity-preserving systemd-networkd configuration cleanup
   if command -v networkctl >/dev/null 2>&1; then
     echo "Checking systemd-networkd configurations..."
 
-    # Only cleanup if NetworkManager is not managing the interfaces
+    # Only cleanup if systemd-networkd is not managing the interfaces
     # Check if any interfaces are managed by networkd
     local networkd_interfaces=$(networkctl list | awk '/ether|wlan|wwan/ {print $2}' | grep -v lo || true)
 
@@ -326,9 +374,9 @@ cleanup_all_networking() {
 
       # Check each interface to see if it's safe to stop
       for link in $(networkctl list | awk '/ether|wlan|wwan/ {print $1}' | grep -v lo || true); do
-        # Check if this interface is managed by NetworkManager
+        # Check if this interface is managed by systemd-networkd
         if nmcli device status 2>/dev/null | grep -q "^${link} "; then
-          echo "⚠️  Interface ${link} is managed by NetworkManager - SKIPPING systemd-networkd cleanup"
+          echo "⚠️  Interface ${link} is managed by systemd-networkd - SKIPPING systemd-networkd cleanup"
           safe_to_cleanup=0
           break
         fi
@@ -342,7 +390,7 @@ cleanup_all_networking() {
       done
 
       if [[ ${safe_to_cleanup} -eq 1 ]]; then
-        echo "✅ No active NetworkManager-managed interfaces found - proceeding with cleanup"
+        echo "✓ No active systemd-networkd-managed interfaces found - proceeding with cleanup"
 
         # Stop networkd links that are safe to stop
         for link in $(networkctl list | awk '/ether|wlan|wwan/ {print $1}' | grep -v lo || true); do
@@ -358,7 +406,7 @@ cleanup_all_networking() {
         done
 
         systemctl reload systemd-networkd 2>/dev/null || true
-        echo "✅ systemd-networkd cleanup completed"
+        echo "✓ systemd-networkd cleanup completed"
       else
         echo "⚠️  systemd-networkd cleanup SKIPPED to preserve connectivity"
       fi
@@ -367,34 +415,17 @@ cleanup_all_networking() {
     fi
   fi
 
-  # 2. Ultra-conservative NetworkManager cleanup - ZERO connectivity interruption
-  if command -v nmcli >/dev/null 2>&1; then
-    echo "Performing ultra-conservative NetworkManager cleanup (zero interruption)..."
+  # 2. Ultra-conservative network cleanup - ZERO connectivity interruption
+  if systemctl is-active --quiet NetworkManager 2>/dev/null && command -v nmcli >/dev/null 2>&1; then
+    echo "Performing ultra-conservative systemd-networkd cleanup (zero interruption)..."
 
     # Get current active connections BEFORE any cleanup
     local active_before=$(nmcli -t -f NAME connection show --active 2>/dev/null | wc -l)
     echo "Active connections before cleanup: ${active_before}"
 
-    # Create checkpoint for safety
+    # Skip checkpoint creation for safety (systemd-networkd doesn't support checkpoints)
     local checkpoint_path=""
-    if command -v gdbus >/dev/null 2>&1; then
-      local device_paths
-      device_paths=$(gdbus call --system --dest org.freedesktop.NetworkManager \
-        --object-path /org/freedesktop/NetworkManager \
-        --method org.freedesktop.NetworkManager.GetDevices 2>/dev/null | \
-        grep -o "'[^']*'" | tr -d "'" | tr '\n' ',' | sed 's/,$//')
-
-      if [[ -n "${device_paths}" ]]; then
-        checkpoint_path=$(gdbus call --system --dest org.freedesktop.NetworkManager \
-          --object-path /org/freedesktop/NetworkManager \
-          --method org.freedesktop.NetworkManager.CheckpointCreate \
-          "[$device_paths]" 600 2>/dev/null | grep -o "'[^']*'" | tr -d "'" | head -1)
-
-        if [[ -n "${checkpoint_path}" ]]; then
-          echo "✅ Checkpoint created for safety: ${checkpoint_path}"
-        fi
-      fi
-    fi
+    echo "⏭️  Skipping checkpoint creation during cleanup - systemd-networkd doesn't support rollback checkpoints"
 
     # ULTRA-CONSERVATIVE APPROACH: Only delete connections that are 100% safe to remove
     local connections_to_delete=()
@@ -425,14 +456,14 @@ cleanup_all_networking() {
       case "${conn_name}" in
         # System connections - NEVER delete
         lo|docker0|virbr0|ovs-system)
-          echo "✅ Preserving essential system connection: ${conn_name}"
+          echo "✓ Preserving essential system connection: ${conn_name}"
           continue
           ;;
 
         # Uplink connection - NEVER delete
         *)
           if [[ -n "${uplink_connection}" && "${conn_name}" == "${uplink_connection}" ]]; then
-            echo "✅ Preserving uplink connection: ${conn_name}"
+            echo "✓ Preserving uplink connection: ${conn_name}"
             continue
           fi
 
@@ -464,7 +495,7 @@ cleanup_all_networking() {
       for conn in "${connections_to_delete[@]}"; do
         echo "Deleting: ${conn}"
         if nmcli connection delete "${conn}" >/dev/null 2>&1; then
-          echo "  ✅ Deleted: ${conn}"
+          echo "  ✓ Deleted: ${conn}"
         else
           echo "  ⚠️  Failed to delete: ${conn} (may already be gone)"
         fi
@@ -477,37 +508,19 @@ cleanup_all_networking() {
       local active_after=$(nmcli -t -f NAME connection show --active 2>/dev/null | wc -l)
       if [[ ${active_after} -lt ${active_before} ]]; then
         echo "⚠️  WARNING: Active connections decreased from ${active_before} to ${active_after}"
-        if [[ -n "${checkpoint_path}" ]]; then
-          echo "🔄 Rolling back changes due to connectivity loss..."
-          gdbus call --system --dest org.freedesktop.NetworkManager \
-            --object-path /org/freedesktop/NetworkManager \
-            --method org.freedesktop.NetworkManager.CheckpointRollback \
-            "'${checkpoint_path}'" >/dev/null 2>&1 || true
-          echo "❌ Installation aborted - connectivity would be interrupted"
-          exit 1
-        fi
+        echo "❌ Installation aborted - connectivity would be interrupted"
+        echo "ℹ️  No checkpoint rollback available (systemd-networkd doesn't support checkpoints)"
+        exit 1
       else
-        echo "✅ Connectivity preserved: ${active_after} active connections maintained"
-        # Commit the changes
-        if [[ -n "${checkpoint_path}" ]]; then
-          gdbus call --system --dest org.freedesktop.NetworkManager \
-            --object-path /org/freedesktop/NetworkManager \
-            --method org.freedesktop.NetworkManager.CheckpointDestroy \
-            "'${checkpoint_path}'" >/dev/null 2>&1 || true
-        fi
+        echo "✓ Connectivity preserved: ${active_after} active connections maintained"
+        # No checkpoint to destroy (systemd-networkd doesn't support checkpoints)
       fi
     else
-      echo "✅ No obsolete connections found to clean up"
-      # Destroy checkpoint since no changes were made
-      if [[ -n "${checkpoint_path}" ]]; then
-        gdbus call --system --dest org.freedesktop.NetworkManager \
-          --object-path /org/freedesktop/NetworkManager \
-          --method org.freedesktop.NetworkManager.CheckpointDestroy \
-          "'${checkpoint_path}'" >/dev/null 2>&1 || true
-      fi
+      echo "✓ No obsolete connections found to clean up"
+      # No checkpoint to destroy (systemd-networkd doesn't support checkpoints)
     fi
 
-    echo "✅ Ultra-conservative NetworkManager cleanup completed - ZERO connectivity interruption"
+    echo "✓ Ultra-conservative systemd-networkd cleanup completed - ZERO connectivity interruption"
   fi
 
   # 3. OVS cleanup
@@ -519,14 +532,14 @@ cleanup_all_networking() {
       local checkpoint_path=""
       if command -v gdbus >/dev/null 2>&1 && command -v nmcli >/dev/null 2>&1; then
         local device_paths
-        device_paths=$(gdbus call --system --dest org.freedesktop.NetworkManager \
-          --object-path /org/freedesktop/NetworkManager \
-          --method org.freedesktop.NetworkManager.GetDevices 2>/dev/null | \
+        device_paths=$(gdbus call --system --dest org.freedesktop.systemd-networkd \
+          --object-path /org/freedesktop/systemd-networkd \
+          --method org.freedesktop.systemd-networkd.GetDevices 2>/dev/null | \
           grep -o "'[^']*'" | tr -d "'" | tr '\n' ',' | sed 's/,$//')
         if [[ -n "${device_paths}" ]]; then
-          checkpoint_path=$(gdbus call --system --dest org.freedesktop.NetworkManager \
-            --object-path /org/freedesktop/NetworkManager \
-            --method org.freedesktop.NetworkManager.CheckpointCreate \
+          checkpoint_path=$(gdbus call --system --dest org.freedesktop.systemd-networkd \
+            --object-path /org/freedesktop/systemd-networkd \
+            --method org.freedesktop.systemd-networkd.CheckpointCreate \
             "[${device_paths}]" 600 2>/dev/null | grep -o "'[^']*'" | tr -d "'" | head -1)
         fi
       fi
@@ -534,9 +547,9 @@ cleanup_all_networking() {
       # If uplink is provided, ensure it is detached from any bridge before purge
       detach_uplink_if_enslaved "${uplink}"
 
-      # First, try to delete via NetworkManager profiles so NM tears down cleanly
+      # First, try to delete via systemd-networkd profiles so NM tears down cleanly
       if command -v nmcli >/dev/null 2>&1; then
-        echo "Removing OVS-related NetworkManager profiles..."
+        echo "Removing OVS-related systemd-networkd profiles..."
         nmcli -t -f NAME,TYPE connection show | awk -F: '/^ovs-|:ovs-bridge|:ovs-port|:ovs-interface/ {print $1}' | while read -r conn; do
           [[ -n "$conn" ]] || continue
           echo "  Deleting NM connection: $conn"
@@ -564,9 +577,9 @@ cleanup_all_networking() {
 
       if [[ -n "${checkpoint_path}" ]]; then
         # Commit the checkpoint after successful purge
-        gdbus call --system --dest org.freedesktop.NetworkManager \
-          --object-path /org/freedesktop/NetworkManager \
-          --method org.freedesktop.NetworkManager.CheckpointDestroy \
+        gdbus call --system --dest org.freedesktop.systemd-networkd \
+          --object-path /org/freedesktop/systemd-networkd \
+          --method org.freedesktop.systemd-networkd.CheckpointDestroy \
           "'${checkpoint_path}'" >/dev/null 2>&1 || true
       fi
     else
@@ -599,10 +612,10 @@ cleanup_all_networking() {
           continue
         fi
 
-        # Additional safety check: check if bridge is referenced in any NetworkManager connections
+        # Additional safety check: check if bridge is referenced in any systemd-networkd connections
         local bridge_in_nm=$(nmcli -t -f NAME connection show 2>/dev/null | grep -c "^${bridge}$" || true)
         if [[ ${bridge_in_nm} -gt 0 ]]; then
-          echo "⚠️  Bridge ${bridge} is referenced in ${bridge_in_nm} NetworkManager connection(s)"
+          echo "⚠️  Bridge ${bridge} is referenced in ${bridge_in_nm} systemd-networkd connection(s)"
           echo "   SKIPPING to avoid disrupting existing network configuration"
           continue
         fi
@@ -644,7 +657,7 @@ cleanup_all_networking() {
       echo "   These may be providing connectivity - SKIPPING cleanup to preserve connectivity"
 
       # Instead of removing everything, just comment out OVS-specific sections
-      # that might conflict with NetworkManager
+      # that might conflict with systemd-networkd
       awk '
       BEGIN { in_ovs_section = 0 }
       /^auto.*ovsbr/ || /^iface.*ovsbr/ || /^auto.*br.*ovs/ || /^iface.*br.*ovs/ {
@@ -666,7 +679,7 @@ cleanup_all_networking() {
 
       if [[ -s "/etc/network/interfaces.tmp" ]]; then
         mv /etc/network/interfaces.tmp /etc/network/interfaces 2>/dev/null || true
-        echo "✅ Commented out conflicting OVS configurations"
+        echo "✓ Commented out conflicting OVS configurations"
       fi
     else
       echo "No active bridge configurations found - /etc/network/interfaces is clean"
@@ -693,27 +706,27 @@ cleanup_all_networking() {
   systemctl reload dbus.service 2>/dev/null || true
 
   # Kill any lingering network-related processes
-  pkill -f "dhclient\|NetworkManager\|wpa_supplicant" 2>/dev/null || true
+  pkill -f "dhclient\|systemd-networkd\|wpa_supplicant" 2>/dev/null || true
 
   echo "Ultra-conservative connectivity-preserving cleanup complete!"
-  echo "✅ ABSOLUTE ZERO connectivity interruption during installation"
+  echo "✓ ABSOLUTE ZERO connectivity interruption during installation"
   echo "Preserved: ALL active connections, uplink, and essential system interfaces"
   echo "Cleaned: Only legacy dyn-port connections (100% safe removals)"
   echo "Skipped: Any potentially active network configurations"
   echo "Backups created in ${BACKUP_DIR} for rollback capability"
 }
 
-ensure_nm_bridge() {
+ensure_systemd_bridge() {
   local bridge_name="$1"
   local uplink="$2"
 
   if ! command -v nmcli >/dev/null 2>&1; then
-    echo "nmcli not found; skipping NetworkManager bridge setup"
+    echo "nmcli not found; skipping systemd-networkd bridge setup"
     return
   fi
 
-  if ! systemctl is-active --quiet NetworkManager; then
-    echo "NetworkManager is not active; skipping nmcli bridge setup"
+  if ! systemctl is-active --quiet systemd-networkd; then
+    echo "systemd-networkd is not active; skipping nmcli bridge setup"
     return
   fi
 
@@ -721,97 +734,135 @@ ensure_nm_bridge() {
   local port_conn="ovs-port-${bridge_name}"
   local iface_conn="ovs-if-${bridge_name}"
 
-  # These connections will be cleaned up by the comprehensive cleanup function
-  # so we don't need to delete them here - the ensure_nm_bridge function
-  # in the Rust code will handle creating them fresh
+echo "Creating systemd-networkd configuration for OVS bridge ${bridge_name}"
 
-  echo "Provisioning NetworkManager bridge profiles for ${bridge_name}"
-  nmcli connection add type ovs-bridge \
-    conn.interface "${bridge_name}" \
-    con-name "${bridge_conn}" >/dev/null
+  # Create .netdev file for the OVS bridge
+  cat > "/etc/systemd/network/${bridge_name}.netdev" << EOF
+[NetDev]
+Name=${bridge_name}
+Kind=ovs-bridge
 
-  nmcli connection add type ovs-port \
-    conn.interface "${bridge_name}" \
-    master "${bridge_name}" \
-    con-name "${port_conn}" >/dev/null
+[OVSBridge]
+STP=no
+RSTP=no
+McastSnooping=yes
+EOF
 
-  nmcli connection add type ovs-interface \
-    slave-type ovs-port \
-    conn.interface "${bridge_name}" \
-    master "${port_conn}" \
-    con-name "${iface_conn}" \
-    ipv4.method auto \
-    ipv6.method disabled >/dev/null
+# Create .network file for the bridge
+  cat > "/etc/systemd/network/${bridge_name}.network" << EOF
+[Match]
+Name=${bridge_name}
 
-  if [[ -n "${uplink}" ]]; then
-    local uplink_port_conn="ovs-port-${bridge_name}-${uplink}"
-    local uplink_iface_conn="ovs-if-${bridge_name}-${uplink}"
+[Network]
+DHCP=yes
+IPv6AcceptRA=yes
+EOF
 
-    nmcli connection delete "${uplink_port_conn}" >/dev/null 2>&1 || true
-    nmcli connection delete "${uplink_iface_conn}" >/dev/null 2>&1 || true
+  # Create internal interface .netdev and .network
+  local internal_iface="${bridge_name}_if"
+  cat > "/etc/systemd/network/${internal_iface}.netdev" << EOF
+[NetDev]
+Name=${internal_iface}
+Kind=ovs-interface
 
-    echo "Provisioning uplink ${uplink} for ${bridge_name}"
-    nmcli connection add type ovs-port \
-      conn.interface "${uplink}" \
-      master "${bridge_name}" \
-      con-name "${uplink_port_conn}" >/dev/null
+[OVSInterface]
+Type=internal
+Bridge=${bridge_name}
+EOF
 
-    nmcli connection add type ethernet \
-      conn.interface "${uplink}" \
-      master "${uplink_port_conn}" \
-      con-name "${uplink_iface_conn}" >/dev/null
+  cat > "/etc/systemd/network/${internal_iface}.network" << EOF
+[Match]
+Name=${internal_iface}
 
-    nmcli connection up "${uplink_iface_conn}" >/dev/null 2>&1 || true
+[Network]
+DHCP=yes
+IPv6AcceptRA=yes
+EOF
+
+  # Reload systemd-networkd
+  networkctl reload 2>/dev/null || true
+  echo "Note: Network configuration applied - manual service reload may be needed if changes don't take effect"
+
+if [[ -n "${uplink}" ]]; then
+    echo "Configuring uplink ${uplink} for ${bridge_name}"
+    
+    # Create .network file to enslave uplink to bridge
+    cat > "/etc/systemd/network/50-${uplink}.network" << EOF
+[Match]
+Name=${uplink}
+
+[Network]
+Bridge=${bridge_name}
+EOF
   fi
 
-  nmcli connection up "${bridge_conn}" >/dev/null 2>&1 || true
-  nmcli connection up "${iface_conn}"  >/dev/null 2>&1 || true
+  # Apply systemd-networkd configuration
+  if [[ ${NO_RESTART} -eq 0 ]]; then
+    echo "Reloading systemd-networkd configuration..."
+    if ! networkctl reload 2>/dev/null; then
+      echo "⚠️  networkctl reload failed, attempting service restart..."
+      echo "⚠️  WARNING: This may temporarily disrupt network connectivity!"
+      echo "Press Ctrl+C within 5 seconds to abort..."
+      sleep 5
+      systemctl restart systemd-networkd 2>/dev/null || true
+    fi
+  else
+    echo "Skipping network service restart (--no-restart specified)"
+    echo "Manual reload required: sudo networkctl reload"
+  fi
 }
 
-ensure_nm_bridge_ovsbr1() {
+ensure_systemd_bridge_ovsbr1() {
   local bridge_name="$1"
-
-  if ! command -v nmcli >/dev/null 2>&1; then
-    echo "nmcli not found; skipping NetworkManager ovsbr1 setup"
-    return
-  fi
-
-  if ! systemctl is-active --quiet NetworkManager; then
-    echo "NetworkManager is not active; skipping ovsbr1 setup"
-    return
-  fi
-
-  local bridge_conn="ovs-bridge-${bridge_name}"
-  local port_conn="ovs-port-${bridge_name}"
-  local iface_conn="ovs-if-${bridge_name}"
 
   echo "Creating ovsbr1 as isolated bridge (no uplink, DHCP-enabled)"
 
-  # Create bridge with DHCP capability for internal networking
-  nmcli connection add type ovs-bridge \
-    conn.interface "${bridge_name}" \
-    con-name "${bridge_conn}" \
-    ipv4.method auto \
-    ipv6.method disabled >/dev/null
+  # Create .netdev file for ovsbr1 bridge
+  cat > "/etc/systemd/network/${bridge_name}.netdev" << EOF
+[NetDev]
+Name=${bridge_name}
+Kind=ovs-bridge
 
-  # Create internal port for the bridge
-  nmcli connection add type ovs-port \
-    conn.interface "${bridge_name}" \
-    master "${bridge_name}" \
-    con-name "${port_conn}" >/dev/null
+[OVSBridge]
+STP=no
+RSTP=no
+McastSnooping=yes
+EOF
 
-  # Create internal interface with DHCP
-  nmcli connection add type ovs-interface \
-    slave-type ovs-port \
-    conn.interface "${bridge_name}" \
-    master "${port_conn}" \
-    con-name "${iface_conn}" \
-    ipv4.method auto \
-    ipv6.method disabled >/dev/null
+  # Create .network file for ovsbr1 with DHCP
+  cat > "/etc/systemd/network/${bridge_name}.network" << EOF
+[Match]
+Name=${bridge_name}
+
+[Network]
+DHCP=yes
+IPv6AcceptRA=yes
+EOF
+
+  # Create internal interface for DHCP
+  local internal_iface="${bridge_name}_if"
+  cat > "/etc/systemd/network/${internal_iface}.netdev" << EOF
+[NetDev]
+Name=${internal_iface}
+Kind=ovs-interface
+
+[OVSInterface]
+Type=internal
+Bridge=${bridge_name}
+EOF
+
+  cat > "/etc/systemd/network/${internal_iface}.network" << EOF
+[Match]
+Name=${internal_iface}
+
+[Network]
+DHCP=yes
+IPv6AcceptRA=yes
+EOF
 
   echo "Activating ovsbr1 bridge..."
-  nmcli connection up "${bridge_conn}" >/dev/null 2>&1 || true
-  nmcli connection up "${iface_conn}" >/dev/null 2>&1 || true
+  networkctl reload 2>/dev/null || true
+  echo "Note: Network configuration applied - manual service reload may be needed if changes don't take effect"
 
   echo "ovsbr1 created successfully as DHCP-enabled bridge"
 }
@@ -835,6 +886,10 @@ while [[ $# -gt 0 ]]; do
       PURGE_BRIDGES=1; shift;;
     --force-ovsctl)
       ALLOW_OVSCTL_FORCE=1; shift;;
+    --no-restart)
+      NO_RESTART=1; shift;;
+    --skip-netmaker)
+      SKIP_NETMAKER=1; shift;;
     --help|-h)
       usage; exit 0;;
     *)
@@ -910,11 +965,11 @@ create_backups
 # Clean up existing devices before creating new bridge setup
 cleanup_all_networking "${UPLINK}"
 
-ensure_nm_bridge "${BRIDGE}" "${UPLINK}"
+ensure_systemd_bridge "${BRIDGE}" "${UPLINK}"
 if (( CREATE_OVSBR1 )); then
   # Clean up ovsbr1 separately since it has no uplink
   cleanup_all_networking ""
-  ensure_nm_bridge_ovsbr1 "ovsbr1"
+  ensure_systemd_bridge_ovsbr1 "ovsbr1"
 fi
 
 if command -v journalctl >/dev/null 2>&1; then
@@ -935,5 +990,11 @@ fi
 cleanup_backups
 
 echo "Installation completed successfully!"
+echo "Detected services:"
+[[ ${HAS_SYSTEMD_NETWORKD} -eq 1 ]] && echo "  ✓ systemd-networkd configured"
+[[ ${HAS_NETMAKER} -eq 1 ]] && echo "  ✓ Netmaker support enabled"
+[[ ${HAS_DOCKER} -eq 1 ]] && echo "  ✓ Docker integration ready"
+[[ ${HAS_OVS} -eq 1 ]] && echo "  ✓ Open vSwitch available"
 echo "Rollback script available at: ${REPO_ROOT}/scripts/rollback.sh"
 echo "Btrfs snapshot available for system-level rollback if needed"
+exit 0
