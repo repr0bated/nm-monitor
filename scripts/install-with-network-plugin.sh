@@ -49,6 +49,14 @@ while [[ $# -gt 0 ]]; do
       WITH_OVSBR1=1
       shift
       ;;
+    --bridge0-name)
+      BRIDGE0_NAME="$2"
+      shift 2
+      ;;
+    --bridge1-name)
+      BRIDGE1_NAME="$2"
+      shift 2
+      ;;
     --system)
       ENABLE_SERVICE=1
       shift
@@ -279,7 +287,7 @@ if [[ ${INTROSPECT} -eq 1 ]]; then
   
   # Generate config to temp file
   NETWORK_CONFIG="/tmp/network-introspected-$$.yaml"
-  "${INTROSPECT_SCRIPT}" "${NETWORK_CONFIG}" || {
+  "${INTROSPECT_SCRIPT}" "${NETWORK_CONFIG}" "${BRIDGE0_NAME}" || {
     echo -e "${RED}ERROR: Network introspection failed${NC}" >&2
     exit 1
   }

@@ -87,8 +87,8 @@ echo "  Speed: ${SPEED}"
 echo "  Duplex: ${DUPLEX}"
 echo ""
 
-# Determine bridge name
-BRIDGE_NAME="ovsbr0"
+# Determine bridge name (can be overridden by argument)
+BRIDGE_NAME="${2:-vmbr0}"
 echo "Target Bridge: ${BRIDGE_NAME}"
 echo ""
 
