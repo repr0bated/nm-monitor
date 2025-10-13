@@ -100,57 +100,58 @@ cat > "${OUTPUT_FILE}" <<EOF
 # Created: $(date)
 # Source: ${PRIMARY_IFACE} (${IP_ADDR}/${PREFIX})
 
-version: 1
+version: "1.0"
 
-network:
-  interfaces:
-    # OVS bridge with uplink from ${PRIMARY_IFACE}
-    - name: ${BRIDGE_NAME}
-      type: ovs-bridge
-      ports:
-        - ${PRIMARY_IFACE}
-      ipv4:
-        enabled: true
+plugins:
+  net:
+    interfaces:
+      # OVS bridge with uplink from ${PRIMARY_IFACE}
+      - name: ${BRIDGE_NAME}
+        type: ovs-bridge
+        ports:
+          - ${PRIMARY_IFACE}
+        ipv4:
+          enabled: true
 EOF
 
 if [[ "${IS_DHCP}" == "true" ]]; then
   cat >> "${OUTPUT_FILE}" <<EOF
-        dhcp: true  # Detected DHCP on ${PRIMARY_IFACE}
+          dhcp: true  # Detected DHCP on ${PRIMARY_IFACE}
 EOF
 else
   cat >> "${OUTPUT_FILE}" <<EOF
-        dhcp: false
-        address:
-          - ip: ${IP_ADDR}
-            prefix: ${PREFIX}
+          dhcp: false
+          address:
+            - ip: ${IP_ADDR}
+              prefix: ${PREFIX}
 EOF
   
   if [[ -n "${GATEWAY}" ]]; then
     cat >> "${OUTPUT_FILE}" <<EOF
-        gateway: ${GATEWAY}
+          gateway: ${GATEWAY}
 EOF
   fi
   
   if [[ ${#DNS_SERVERS[@]} -gt 0 ]]; then
     cat >> "${OUTPUT_FILE}" <<EOF
-        dns:
+          dns:
 EOF
     for dns in "${DNS_SERVERS[@]}"; do
       cat >> "${OUTPUT_FILE}" <<EOF
-          - ${dns}
+            - ${dns}
 EOF
     done
   fi
 fi
 
 cat >> "${OUTPUT_FILE}" <<EOF
-    
-    # Physical uplink (enslaved to bridge)
-    - name: ${PRIMARY_IFACE}
-      type: ethernet
-      controller: ${BRIDGE_NAME}
-      ipv4:
-        enabled: false  # IP moves to bridge
+      
+      # Physical uplink (enslaved to bridge)
+      - name: ${PRIMARY_IFACE}
+        type: ethernet
+        controller: ${BRIDGE_NAME}
+        ipv4:
+          enabled: false  # IP moves to bridge
 EOF
 
 echo "=========================================="
