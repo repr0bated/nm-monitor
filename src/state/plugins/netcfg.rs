@@ -103,6 +103,17 @@ impl NetcfgStatePlugin {
 
     /// Query current OVS flows
     async fn query_ovs_flows(&self) -> Result<HashMap<String, Vec<OvsFlowConfig>>> {
+        // Check if OVS is available first
+        let check_output = AsyncCommand::new("ovs-vsctl")
+            .arg("--version")
+            .output()
+            .await;
+            
+        if check_output.is_err() || !check_output.unwrap().status.success() {
+            log::info!("OVS not available, skipping OVS flows query");
+            return Ok(HashMap::new());
+        }
+
         // Get list of OVS bridges
         let output = AsyncCommand::new("ovs-vsctl")
             .args(["list-br"])

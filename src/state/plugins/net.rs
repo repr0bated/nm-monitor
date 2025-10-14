@@ -187,18 +187,19 @@ impl NetStatePlugin {
     }
 
     /// Check if OVS is installed and running
-    async fn check_ovs_available(&self) -> Result<()> {
+    async fn check_ovs_available(&self) -> Result<bool> {
         let output = AsyncCommand::new("ovs-vsctl")
             .arg("--version")
             .output()
-            .await
-            .context("Failed to check OVS version - is openvswitch-switch installed?")?;
+            .await;
 
-        if !output.status.success() {
-            return Err(anyhow!("OVS is not available or not running"));
+        match output {
+            Ok(out) if out.status.success() => Ok(true),
+            _ => {
+                log::info!("OVS not available - skipping OVS operations");
+                Ok(false)
+            }
         }
-
-        Ok(())
     }
 
     /// Query current network state from systemd-networkd
@@ -588,7 +589,9 @@ impl NetStatePlugin {
 
         // If it's an OVS bridge, check OVS is available and create it
         if config.if_type == InterfaceType::OvsBridge {
-            self.check_ovs_available().await?;
+            if !self.check_ovs_available().await? {
+                return Err(anyhow!("OVS bridge {} requested but OVS not available", config.name));
+            }
             self.create_ovs_bridge(&config.name).await?;
 
             // Attach ports if specified
