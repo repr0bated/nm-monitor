@@ -13,28 +13,28 @@ error_exit() { log "${RED}[ERROR]${NC} $1"; exit 1; }
 
 [[ $EUID -eq 0 ]] || error_exit "Must run as root"
 
-# Build the agent first to use zbus client
+# Build the agent first
 cd "$(dirname "$0")/.."
 cargo build --release || error_exit "Failed to build agent"
 
-# Create checkpoint via zbus
+# Create checkpoint
 CHECKPOINT_ID=$(date +%s)
 log "${BLUE}Creating checkpoint: $CHECKPOINT_ID${NC}"
 mkdir -p "/tmp/networkd-checkpoint-$CHECKPOINT_ID"
 cp -r /etc/systemd/network/* "/tmp/networkd-checkpoint-$CHECKPOINT_ID/" 2>/dev/null || true
 
-# Use our zbus client to introspect uplink
-UPLINK=$(./target/release/ovs-port-agent query-state network 2>/dev/null | \
-  jq -r '.links[] | select(.operational_state == "routable") | .name' | \
-  grep -v '^lo$' | head -1)
+# Detect uplink interface (simple method)
+UPLINK=$(ip route show default | awk '{print $5}' | head -1)
+[[ -n "$UPLINK" ]] || UPLINK="eth0"  # fallback
 
-[[ -n "$UPLINK" ]] || error_exit "Could not detect uplink via zbus"
 log "Detected uplink: $UPLINK"
 
 # Get current IP configuration
-UPLINK_IP=$(ip -o -4 addr show "$UPLINK" | awk '{print $4}' | cut -d/ -f1)
-UPLINK_PREFIX=$(ip -o -4 addr show "$UPLINK" | awk '{print $4}' | cut -d/ -f2)
+UPLINK_IP=$(ip -o -4 addr show "$UPLINK" | awk '{print $4}' | cut -d/ -f1 | head -1)
+UPLINK_PREFIX=$(ip -o -4 addr show "$UPLINK" | awk '{print $4}' | cut -d/ -f2 | head -1)
 GATEWAY=$(ip route show default | awk '{print $3}' | head -1)
+
+[[ -n "$UPLINK_IP" ]] || error_exit "Could not detect IP address for $UPLINK"
 
 # Create systemd-networkd configuration
 NETD_DIR="/etc/systemd/network"
@@ -67,20 +67,22 @@ Name=$UPLINK
 Bridge=ovsbr0
 EOF
 
-# Atomic reload via our zbus client
-log "${BLUE}Performing atomic reload via zbus${NC}"
-if ! ./target/release/ovs-port-agent atomic-bridge-operation ovsbr0 reload_networkd; then
+# Reload systemd-networkd
+log "${BLUE}Reloading systemd-networkd${NC}"
+systemctl reload-or-restart systemd-networkd || {
     log "${RED}Reload failed, rolling back${NC}"
     rm -f "$NETD_DIR"/{10-ovsbr0.netdev,20-$UPLINK.network,30-ovsbr0.network}
     cp "/tmp/networkd-checkpoint-$CHECKPOINT_ID"/* "$NETD_DIR/" 2>/dev/null || true
-    ./target/release/ovs-port-agent atomic-bridge-operation ovsbr0 reload_networkd
+    systemctl reload-or-restart systemd-networkd
     error_exit "Failed to create bridge"
-fi
+}
 
-# Verify via zbus
-sleep 2
-if ./target/release/ovs-port-agent validate-bridge-connectivity ovsbr0 | grep -q '"exists": true'; then
-    log "${GREEN}✓ Bridge created successfully via zbus${NC}"
+# Wait for network to stabilize
+sleep 3
+
+# Verify bridge exists
+if ip link show ovsbr0 >/dev/null 2>&1; then
+    log "${GREEN}✓ Bridge created successfully${NC}"
 else
     error_exit "Bridge verification failed"
 fi
@@ -88,11 +90,11 @@ fi
 # Install the agent
 install -m 0755 target/release/ovs-port-agent /usr/local/bin/
 install -d /etc/ovs-port-agent
-install -m 0644 config/config.toml.example /etc/ovs-port-agent/config.toml
+[[ ! -f /etc/ovs-port-agent/config.toml ]] && install -m 0644 config/config.toml.example /etc/ovs-port-agent/config.toml
 install -m 0644 dbus/dev.ovs.PortAgent1.conf /etc/dbus-1/system.d/
 install -m 0644 systemd/ovs-port-agent.service /etc/systemd/system/
 
 systemctl daemon-reload
 systemctl enable --now ovs-port-agent
 
-log "${GREEN}Installation complete - pure zbus operations${NC}"
+log "${GREEN}Installation complete - systemd-networkd bridge created${NC}"
