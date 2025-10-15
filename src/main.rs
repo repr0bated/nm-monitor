@@ -28,6 +28,7 @@ mod zbus_networkd;
 use crate::error::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tracing::{info, warn};
 
 #[derive(Parser)]
@@ -158,11 +159,26 @@ async fn main() -> Result<()> {
                 .register_plugin(Box::new(state::plugins::NetcfgStatePlugin::new()))
                 .await;
 
+            // Set up streaming blockchain and footprint channel
+            let (footprint_tx, footprint_rx) = tokio::sync::mpsc::unbounded_channel();
+            let streaming_blockchain = Arc::new(
+                streaming_blockchain::StreamingBlockchain::new("/var/lib/blockchain").await
+                    .map_err(|e| error::Error::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?
+            );
+            
+            // Start footprint receiver
+            let blockchain_clone = streaming_blockchain.clone();
+            tokio::spawn(async move {
+                blockchain_clone.start_footprint_receiver(footprint_rx).await
+            });
+
             // Set up RPC state for container interface creation/removal
             let rpc_state = rpc::AppState {
                 bridge: cfg.bridge_name().to_string(),
                 ledger_path: cfg.ledger_path().to_string(),
                 state_manager: Some(state_manager),
+                streaming_blockchain,
+                footprint_sender: footprint_tx,
             };
 
             info!("OVS Port Agent initialized successfully");

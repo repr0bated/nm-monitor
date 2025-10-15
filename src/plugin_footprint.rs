@@ -17,6 +17,42 @@ pub struct PluginFootprint {
     pub vector_features: Vec<f32>,
 }
 
+impl PluginFootprint {
+    pub fn new(plugin_id: String, operation: String, metadata: serde_json::Value) -> Self {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        
+        let data_str = serde_json::to_string(&metadata).unwrap_or_default();
+        let mut hasher = Sha256::new();
+        hasher.update(data_str.as_bytes());
+        let data_hash = format!("{:x}", hasher.finalize());
+        
+        let content = format!("{}:{}:{}", plugin_id, operation, timestamp);
+        let mut content_hasher = Sha256::new();
+        content_hasher.update(content.as_bytes());
+        let content_hash = format!("{:x}", content_hasher.finalize());
+        
+        let mut metadata_map = HashMap::new();
+        if let serde_json::Value::Object(obj) = metadata {
+            for (k, v) in obj {
+                metadata_map.insert(k, v);
+            }
+        }
+        
+        Self {
+            plugin_id,
+            operation,
+            timestamp,
+            data_hash,
+            content_hash,
+            metadata: metadata_map,
+            vector_features: vec![0.0; 64], // Default 64-dimensional vector
+        }
+    }
+}
+
 pub struct FootprintGenerator {
     plugin_id: String,
 }
