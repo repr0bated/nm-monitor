@@ -42,12 +42,17 @@ impl StreamingBlockchain {
 
     async fn create_subvolume(path: &Path) -> Result<()> {
         if !path.exists() {
-            Command::new("btrfs")
+            let output = Command::new("btrfs")
                 .args(["subvolume", "create"])
                 .arg(path)
                 .output()
                 .await
-                .context("Failed to create btrfs subvolume")?;
+                .context("Failed to execute btrfs command")?;
+            
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("btrfs subvolume create failed: {}", stderr);
+            }
         }
         Ok(())
     }
@@ -102,14 +107,18 @@ impl StreamingBlockchain {
     pub async fn start_footprint_receiver(
         &self,
         mut receiver: tokio::sync::mpsc::UnboundedReceiver<PluginFootprint>,
-    ) {
+    ) -> Result<()> {
         info!("Starting plugin footprint receiver");
         
         while let Some(footprint) = receiver.recv().await {
             if let Err(e) = self.add_footprint(footprint).await {
                 tracing::error!("Failed to add plugin footprint: {}", e);
+                // Continue processing other footprints instead of failing completely
             }
         }
+        
+        info!("Plugin footprint receiver shutting down");
+        Ok(())
     }
 
     async fn create_snapshot(&self, block_hash: &str) -> Result<()> {

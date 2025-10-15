@@ -1,6 +1,6 @@
 //! Plugin footprint mechanism with hash for blockchain vectorization
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use sha2::{Digest, Sha256};
@@ -35,11 +35,13 @@ impl FootprintGenerator {
         metadata: Option<HashMap<String, serde_json::Value>>,
     ) -> Result<PluginFootprint> {
         let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| anyhow::anyhow!("System clock error: {}", e))?
             .as_secs();
 
         // Hash the data content
-        let data_str = serde_json::to_string(data)?;
+        let data_str = serde_json::to_string(data)
+            .context("Failed to serialize data for hashing")?;
         let data_hash = format!("{:x}", Sha256::digest(data_str.as_bytes()));
 
         // Hash the entire operation context
