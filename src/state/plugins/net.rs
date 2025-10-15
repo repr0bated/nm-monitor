@@ -1,5 +1,6 @@
 // Net state plugin - manages core network infrastructure via systemd-networkd
 // Handles: interfaces, bridges, IPs, basic connectivity (set in stone)
+use crate::plugin_footprint::{FootprintPlugin, PluginFootprint};
 use crate::state::plugin::{
     ApplyResult, Checkpoint, PluginCapabilities, StateAction, StateDiff, StatePlugin,
 };
@@ -82,13 +83,41 @@ pub struct AddressConfig {
 /// Net state plugin implementation
 pub struct NetStatePlugin {
     config_dir: String,
+    blockchain_sender: Option<tokio::sync::mpsc::UnboundedSender<PluginFootprint>>,
 }
 
 impl NetStatePlugin {
     pub fn new() -> Self {
         Self {
             config_dir: "/etc/systemd/network".to_string(),
+            blockchain_sender: None,
         }
+    }
+
+    pub fn with_blockchain_sender(
+        blockchain_sender: tokio::sync::mpsc::UnboundedSender<PluginFootprint>,
+    ) -> Self {
+        Self {
+            config_dir: "/etc/systemd/network".to_string(),
+            blockchain_sender: Some(blockchain_sender),
+        }
+    }
+
+    /// Create footprint for network operations
+    fn create_footprint(&self, operation: &str, data: &Value) -> Result<()> {
+        if let Some(sender) = &self.blockchain_sender {
+            let mut metadata = HashMap::new();
+            metadata.insert("plugin".to_string(), Value::String("network".to_string()));
+            metadata.insert("host".to_string(), Value::String(
+                gethostname::gethostname().to_string_lossy().to_string()
+            ));
+
+            let footprint = crate::plugin_footprint::FootprintGenerator::new("network")
+                .create_footprint(operation, data, Some(metadata))?;
+            
+            sender.send(footprint)?;
+        }
+        Ok(())
     }
 
     /// Validate interface configuration

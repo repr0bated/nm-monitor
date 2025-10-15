@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
-use tracing::{debug, info};
+use crate::plugin_footprint::PluginFootprint;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlockEvent {
@@ -56,8 +56,72 @@ impl StreamingBlockchain {
         Ok(())
     }
 
-    /// Add event with vectorization on creation
-    pub async fn add_event(&self, category: &str, action: &str, data: serde_json::Value) -> Result<String> {
+    /// Add event from plugin footprint
+    pub async fn add_footprint(&self, footprint: PluginFootprint) -> Result<String> {
+        let data = serde_json::json!({
+            "plugin_id": footprint.plugin_id,
+            "operation": footprint.operation,
+            "data_hash": footprint.data_hash,
+            "metadata": footprint.metadata
+        });
+
+        // Use footprint's pre-computed vector features
+        let event = BlockEvent {
+            timestamp: footprint.timestamp,
+            category: footprint.plugin_id.clone(),
+            action: footprint.operation.clone(),
+            data,
+            hash: footprint.content_hash.clone(),
+            vector: footprint.vector_features,
+        };
+
+        // Write to timing subvolume
+        let timing_file = self.timing_subvol.join(format!("{}.json", event.hash));
+        let timing_data = serde_json::json!({
+            "timestamp": event.timestamp,
+            "category": event.category,
+            "action": event.action,
+            "hash": event.hash,
+            "data": event.data,
+            "plugin_footprint": true
+        });
+        tokio::fs::write(&timing_file, serde_json::to_string_pretty(&timing_data)?).await?;
+
+        // Write to vector subvolume
+        let vector_file = self.vector_subvol.join(format!("{}.vec", event.hash));
+        let vector_data = serde_json::json!({
+            "hash": event.hash,
+            "vector": event.vector,
+            "metadata": {
+                "category": event.category,
+                "action": event.action,
+                "timestamp": event.timestamp,
+                "plugin_id": footprint.plugin_id,
+                "data_hash": footprint.data_hash
+            }
+        });
+        tokio::fs::write(&vector_file, serde_json::to_string(&vector_data)?).await?;
+
+        // Create snapshots
+        self.create_snapshot(&event.hash).await?;
+
+        info!("Plugin footprint added with hash: {}", event.hash);
+        Ok(event.hash)
+    }
+
+    /// Start footprint receiver
+    pub async fn start_footprint_receiver(
+        &self,
+        mut receiver: tokio::sync::mpsc::UnboundedReceiver<PluginFootprint>,
+    ) {
+        info!("Starting plugin footprint receiver");
+        
+        while let Some(footprint) = receiver.recv().await {
+            if let Err(e) = self.add_footprint(footprint).await {
+                tracing::error!("Failed to add plugin footprint: {}", e);
+            }
+        }
+    }
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
