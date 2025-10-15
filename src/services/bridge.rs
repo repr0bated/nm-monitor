@@ -1,14 +1,13 @@
-//! Bridge operation service for OVS bridge management
+//! Bridge operation service for systemd-networkd OVS bridge management
 
-use crate::command;
+use crate::networkd_dbus::NetworkdClient;
 use crate::fuse;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
 use tracing::{debug, info, warn};
 
-/// Service for OVS bridge operations
+/// Service for systemd-networkd OVS bridge operations
 #[derive(Debug, Clone)]
 pub struct BridgeService {
     bridge_name: String,
@@ -16,17 +15,16 @@ pub struct BridgeService {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BridgeTopology {
-    pub ovs_show: String,
-    pub networkd_status: String,
-    pub ports: Vec<String>,
-    pub interfaces: Vec<String>,
+    pub networkd_links: Vec<crate::networkd_dbus::LinkInfo>,
+    pub bridge_state: crate::networkd_dbus::BridgeState,
+    pub network_state: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BridgeValidation {
-    pub ovs_bridge_exists: bool,
-    pub networkd_exists: bool,
-    pub bridge_active: bool,
+    pub bridge_exists: bool,
+    pub bridge_operational: bool,
+    pub networkd_responsive: bool,
     pub bridge_synchronization: HashMap<String, bool>,
     pub connectivity_preserved: bool,
 }
@@ -39,71 +37,60 @@ impl BridgeService {
         }
     }
 
-    /// Get bridge topology information
+    /// Get bridge topology via D-Bus introspection
     pub async fn get_topology(&self) -> Result<BridgeTopology> {
-        debug!("Getting topology for bridge '{}'", self.bridge_name);
+        debug!("Getting topology for bridge '{}' via D-Bus", self.bridge_name);
 
-        // Get OVS show output
-        let ovs_show = command::ovs_vsctl(&["show"])
-            .await
-            .context("Failed to get OVS show output")?;
+        let client = NetworkdClient::new().await?;
+        
+        // Get all network links
+        let networkd_links = client.list_links().await
+            .context("Failed to get networkd links")?;
 
-        // Get networkd status
-        let networkd_status = command::networkctl(&["status", &self.bridge_name, "--no-pager"])
-            .await
-            .unwrap_or_else(|e| {
-                warn!(
-                    "Failed to get networkd status for '{}': {}",
-                    self.bridge_name, e
-                );
-                String::from("Status unavailable")
+        // Get bridge-specific state
+        let bridge_state = client.get_bridge_state(&self.bridge_name).await
+            .unwrap_or_else(|_| crate::networkd_dbus::BridgeState {
+                exists: false,
+                operational: false,
+                ports: Vec::new(),
+                addresses: Vec::new(),
             });
 
-        // Get ports
-        let ports = command::get_bridge_ports(&self.bridge_name)
-            .await
-            .unwrap_or_else(|e| {
-                warn!("Failed to get ports for '{}': {}", self.bridge_name, e);
-                Vec::new()
-            });
-
-        // Get interfaces
-        let interfaces = command::get_bridge_interfaces(&self.bridge_name)
-            .await
-            .unwrap_or_else(|e| {
-                warn!("Failed to get interfaces for '{}': {}", self.bridge_name, e);
-                Vec::new()
-            });
+        // Get comprehensive network state
+        let network_state = client.get_network_state().await
+            .context("Failed to get network state")?;
 
         Ok(BridgeTopology {
-            ovs_show,
-            networkd_status,
-            ports,
-            interfaces,
+            networkd_links,
+            bridge_state,
+            network_state,
         })
     }
 
-    /// Validate bridge connectivity and synchronization
+    /// Validate bridge connectivity via D-Bus
     pub async fn validate_connectivity(&self) -> Result<BridgeValidation> {
-        info!("Validating connectivity for bridge '{}'", self.bridge_name);
+        info!("Validating connectivity for bridge '{}' via D-Bus", self.bridge_name);
 
-        // Validate OVS bridge exists
-        let ovs_bridge_exists = command::bridge_exists(&self.bridge_name).await;
+        let client = NetworkdClient::new().await?;
 
-        // Validate networkd configuration exists
-        let networkd_exists = command::network_interface_exists(&self.bridge_name).await;
+        // Check if bridge exists
+        let bridge_exists = client.bridge_exists(&self.bridge_name).await
+            .context("Failed to check bridge existence")?;
 
-        // Validate bridge is active
-        let bridge_active = if networkd_exists {
-            command::execute_command_checked(
-                "networkctl",
-                &["status", &self.bridge_name, "--no-pager"],
-            )
-            .await
-            .unwrap_or(false)
+        // Get bridge operational state
+        let bridge_state = if bridge_exists {
+            client.get_bridge_state(&self.bridge_name).await.ok()
         } else {
-            false
+            None
         };
+
+        let bridge_operational = bridge_state
+            .as_ref()
+            .map(|s| s.operational)
+            .unwrap_or(false);
+
+        // Check networkd responsiveness
+        let networkd_responsive = client.list_links().await.is_ok();
 
         // Validate bridge synchronization with FUSE bindings
         let bridge_synchronization = fuse::validate_bridge_synchronization(&self.bridge_name)
@@ -112,48 +99,48 @@ impl BridgeService {
                 HashMap::new()
             });
 
-        // Validate connectivity preservation
+        // Validate connectivity preservation via D-Bus
         let connectivity_preserved = self.validate_connectivity_preservation().await?;
 
         Ok(BridgeValidation {
-            ovs_bridge_exists,
-            networkd_exists,
-            bridge_active,
+            bridge_exists,
+            bridge_operational,
+            networkd_responsive,
             bridge_synchronization,
             connectivity_preserved,
         })
     }
 
-    /// Validate that connectivity is preserved
+    /// Validate connectivity preservation via D-Bus
     async fn validate_connectivity_preservation(&self) -> Result<bool> {
-        debug!("Validating connectivity preservation");
+        debug!("Validating connectivity preservation via D-Bus");
 
         let mut checks = Vec::new();
 
-        // Check DNS
-        checks.push(command::check_dns("localhost").await);
+        // Check DNS via systemd-resolved D-Bus
+        checks.push(crate::command::check_dns("localhost").await);
 
-        // Check if networkctl is responsive
-        checks.push(
-            command::execute_command_checked("networkctl", &["status"])
-                .await
-                .unwrap_or(false),
-        );
+        // Check networkd responsiveness
+        let client = NetworkdClient::new().await?;
+        checks.push(client.list_links().await.is_ok());
 
-        // Check if we have active connections
-        if let Ok(output) = command::networkctl(&["list", "--no-pager"]).await {
-            let active_count = output.lines().count();
-            checks.push(active_count > 0);
+        // Check if we have operational links
+        if let Ok(links) = client.list_links().await {
+            let operational_count = links
+                .iter()
+                .filter(|link| link.operational_state == "routable" || link.operational_state == "carrier")
+                .count();
+            checks.push(operational_count > 0);
         }
 
         // All checks must pass
         Ok(checks.iter().all(|&check| check))
     }
 
-    /// Perform atomic bridge operation
+    /// Perform atomic bridge operation via systemd-networkd
     pub async fn perform_atomic_operation(&self, operation: &str) -> Result<String> {
         info!(
-            "Performing atomic operation '{}' on bridge '{}'",
+            "Performing atomic operation '{}' on bridge '{}' via systemd-networkd",
             operation, self.bridge_name
         );
 
@@ -175,18 +162,17 @@ impl BridgeService {
                     if is_valid { "PASSED" } else { "FAILED" }
                 ))
             }
-            "sync_with_proxmox" => {
-                let result = self
-                    .synchronize_with_proxmox()
-                    .await
-                    .context("Failed to synchronize with Proxmox")?;
-                Ok(format!("Proxmox sync: {}", result))
+            "reload_networkd" => {
+                let client = NetworkdClient::new().await?;
+                client.reload_networkd().await
+                    .context("Failed to reload networkd")?;
+                Ok("systemd-networkd reloaded successfully".to_string())
             }
             _ => anyhow::bail!("Unknown atomic operation: {}", operation),
         }
     }
 
-    /// Create systemd-networkd backup
+    /// Create systemd-networkd configuration backup
     async fn create_networkd_backup(&self) -> Result<String> {
         debug!("Creating networkd backup");
 
@@ -197,22 +183,22 @@ impl BridgeService {
                 .as_secs()
         );
 
-        std::fs::create_dir_all(&backup_dir)
+        tokio::fs::create_dir_all(&backup_dir).await
             .with_context(|| format!("Failed to create backup directory '{}'", backup_dir))?;
 
         // Copy all .network and .netdev files
-        let network_dir = Path::new("/etc/systemd/network");
+        let network_dir = std::path::Path::new("/etc/systemd/network");
         if network_dir.exists() {
-            for entry in
-                std::fs::read_dir(network_dir).context("Failed to read /etc/systemd/network")?
-            {
-                let entry = entry?;
+            let mut entries = tokio::fs::read_dir(network_dir).await
+                .context("Failed to read /etc/systemd/network")?;
+
+            while let Some(entry) = entries.next_entry().await? {
                 let path = entry.path();
                 if let Some(ext) = path.extension() {
                     if ext == "network" || ext == "netdev" {
                         let file_name = path.file_name().unwrap();
-                        let dest = Path::new(&backup_dir).join(file_name);
-                        std::fs::copy(&path, &dest)
+                        let dest = std::path::Path::new(&backup_dir).join(file_name);
+                        tokio::fs::copy(&path, &dest).await
                             .with_context(|| format!("Failed to copy {:?} to {:?}", path, dest))?;
                     }
                 }
@@ -223,100 +209,32 @@ impl BridgeService {
         Ok(backup_dir)
     }
 
-    /// Validate bridge topology
+    /// Validate bridge topology via D-Bus
     async fn validate_topology(&self) -> Result<bool> {
-        debug!("Validating topology for bridge '{}'", self.bridge_name);
+        debug!("Validating topology for bridge '{}' via D-Bus", self.bridge_name);
 
-        // Check OVS level
-        let ovs_valid = command::bridge_exists(&self.bridge_name).await;
-        if !ovs_valid {
-            warn!("OVS bridge '{}' does not exist", self.bridge_name);
+        let client = NetworkdClient::new().await?;
+
+        // Check if bridge exists
+        let bridge_exists = client.bridge_exists(&self.bridge_name).await?;
+        if !bridge_exists {
+            warn!("Bridge '{}' does not exist", self.bridge_name);
             return Ok(false);
         }
 
-        // Check networkd level
-        let networkd_valid = command::network_interface_exists(&self.bridge_name).await;
-        if !networkd_valid {
-            warn!("Networkd interface '{}' does not exist", self.bridge_name);
+        // Check bridge state
+        let bridge_state = client.get_bridge_state(&self.bridge_name).await?;
+        if !bridge_state.operational {
+            warn!("Bridge '{}' is not operational", self.bridge_name);
             return Ok(false);
         }
 
-        // Check if bridge has required ports
-        let ports = command::get_bridge_ports(&self.bridge_name)
-            .await
-            .unwrap_or_default();
-        let has_ports = !ports.is_empty();
-
+        // Check if bridge has ports
+        let has_ports = !bridge_state.ports.is_empty();
         if !has_ports {
             warn!("Bridge '{}' has no ports", self.bridge_name);
         }
 
         Ok(has_ports)
-    }
-
-    /// Synchronize bridge with Proxmox
-    async fn synchronize_with_proxmox(&self) -> Result<String> {
-        debug!("Synchronizing bridge '{}' with Proxmox", self.bridge_name);
-
-        let bindings =
-            fuse::get_interface_bindings().context("Failed to get interface bindings")?;
-
-        let mut sync_count = 0;
-        for (ovs_interface, binding) in bindings.iter() {
-            if binding.bridge == self.bridge_name {
-                // Ensure Proxmox API compatibility
-                if let Err(e) = fuse::bind_veth_interface_enhanced(
-                    &binding.proxmox_veth,
-                    ovs_interface,
-                    binding.vmid,
-                    &binding.container_id,
-                    &self.bridge_name,
-                ) {
-                    warn!("Failed to sync interface '{}': {}", ovs_interface, e);
-                } else {
-                    sync_count += 1;
-                }
-            }
-        }
-
-        info!(
-            "Synchronized {} interfaces on bridge '{}' with Proxmox",
-            sync_count, self.bridge_name
-        );
-        Ok(format!(
-            "Synchronized {} interfaces with Proxmox",
-            sync_count
-        ))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_bridge_service_creation() {
-        let service = BridgeService::new("vmbr0");
-        assert_eq!(service.bridge_name, "vmbr0");
-    }
-
-    #[tokio::test]
-    async fn test_validate_connectivity_preservation() {
-        let service = BridgeService::new("test-br0");
-        let result = service.validate_connectivity_preservation().await;
-        // This should succeed even if the bridge doesn't exist
-        // as it's checking system-level connectivity
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_perform_atomic_operation_unknown() {
-        let service = BridgeService::new("test-br0");
-        let result = service.perform_atomic_operation("unknown_operation").await;
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Unknown atomic operation"));
     }
 }

@@ -9,7 +9,7 @@ use tracing::{debug, info};
 use zbus::fdo::IntrospectableProxy;
 
 use crate::fuse;
-use crate::ovs_flows::OvsFlowManager;
+use crate::streaming_blockchain::StreamingBlockchain;
 use crate::services::{
     BlockchainService, BridgeService, NetworkStateService, PortManagementService,
 };
@@ -22,6 +22,7 @@ pub struct AppState {
     pub ledger_path: String,
     pub flow_manager: OvsFlowManager,
     pub state_manager: Option<Arc<StateManager>>,
+    pub streaming_blockchain: Arc<StreamingBlockchain>,
 }
 
 /// D-Bus interface implementation
@@ -180,21 +181,66 @@ impl PortAgent {
         ))
     }
 
-    /// Get specific block by hash
-    fn get_block_by_hash(&self, hash: &str) -> zbus::fdo::Result<String> {
-        debug!("D-Bus call: get_block_by_hash({})", hash);
-        let block = self
-            .blockchain_service
-            .get_block_by_hash(hash)
-            .map_err(|e| {
-                zbus::fdo::Error::Failed(format!("Failed to get block with hash '{}': {}", hash, e))
-            })?;
+    /// Add event to streaming blockchain with vectorization
+    fn add_blockchain_event(&self, category: &str, action: &str, data: &str) -> zbus::fdo::Result<String> {
+        info!("D-Bus call: add_blockchain_event({}, {}, ...)", category, action);
+        
+        let data_value: serde_json::Value = serde_json::from_str(data)
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Invalid JSON: {}", e)))?;
 
-        match block {
-            Some(b) => Ok(serde_json::to_string_pretty(&b)
-                .unwrap_or_else(|_| "Failed to serialize block".to_string())),
-            None => Ok("Block not found".to_string()),
-        }
+        let hash = tokio::runtime::Handle::current()
+            .block_on(async { 
+                self.state.streaming_blockchain.add_event(category, action, data_value).await 
+            })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Failed to add event: {}", e)))?;
+
+        Ok(format!("Event added with hash: {}", hash))
+    }
+
+    /// Stream vectors to replica
+    fn stream_vectors(&self, block_hash: &str, remote: &str) -> zbus::fdo::Result<String> {
+        info!("D-Bus call: stream_vectors({}, {})", block_hash, remote);
+        
+        tokio::runtime::Handle::current()
+            .block_on(async { 
+                self.state.streaming_blockchain.stream_vectors(block_hash, remote).await 
+            })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Failed to stream vectors: {}", e)))?;
+
+        Ok(format!("Vectors streamed for block: {}", block_hash))
+    }
+
+    /// Stream to multiple replicas
+    fn stream_to_replicas(&self, block_hash: &str, replicas: &str) -> zbus::fdo::Result<String> {
+        info!("D-Bus call: stream_to_replicas({}, ...)", block_hash);
+        
+        let replica_list: Vec<String> = serde_json::from_str(replicas)
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Invalid replica list: {}", e)))?;
+
+        tokio::runtime::Handle::current()
+            .block_on(async { 
+                self.state.streaming_blockchain.stream_to_replicas(block_hash, &replica_list).await 
+            })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Failed to stream to replicas: {}", e)))?;
+
+        Ok(format!("Streamed to {} replicas", replica_list.len()))
+    }
+
+    /// Query similar events by vector
+    fn query_similar_events(&self, query_vector: &str, limit: u32) -> zbus::fdo::Result<String> {
+        debug!("D-Bus call: query_similar_events(..., {})", limit);
+        
+        let vector: Vec<f32> = serde_json::from_str(query_vector)
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Invalid vector: {}", e)))?;
+
+        let events = tokio::runtime::Handle::current()
+            .block_on(async { 
+                self.state.streaming_blockchain.query_similar(&vector, limit as usize).await 
+            })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Failed to query events: {}", e)))?;
+
+        Ok(serde_json::to_string_pretty(&events)
+            .unwrap_or_else(|_| "Failed to serialize events".to_string()))
     }
 
     // ========================================================================
@@ -266,14 +312,14 @@ impl PortAgent {
             .unwrap_or_else(|_| "Failed to serialize bindings".to_string()))
     }
 
-    /// Introspect systemd-networkd
+    /// Introspect systemd-networkd instead of NetworkManager
     fn introspect_systemd_networkd(&self) -> zbus::fdo::Result<String> {
         debug!("D-Bus call: introspect_systemd_networkd");
         tokio::runtime::Handle::current()
             .block_on(async { introspect_systemd_networkd().await })
             .map(|_| "systemd-networkd introspection completed successfully".to_string())
             .map_err(|e| {
-                zbus::fdo::Error::Failed(format!("NetworkManager introspection failed: {}", e))
+                zbus::fdo::Error::Failed(format!("systemd-networkd introspection failed: {}", e))
             })
     }
 

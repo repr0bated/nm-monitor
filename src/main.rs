@@ -2,6 +2,8 @@
 
 mod command;
 mod error;
+mod networkd_dbus;
+mod streaming_blockchain;
 mod ovs_flows;
 use crate::ovs_flows::OvsFlowManager;
 mod config;

@@ -121,8 +121,6 @@ fn port_exists(name: &str) -> Result<bool> {
 fn remove_port_config(port_name: &str, eth_name: &str) -> Result<()> {
     let files_to_remove = vec![
         format!("/etc/systemd/network/{}.netdev", port_name),
-        format!("/etc/systemd/network/{}.network", port_name),
-        format!("/etc/systemd/network/{}.netdev", eth_name),
         format!("/etc/systemd/network/{}.network", eth_name),
     ];
 
