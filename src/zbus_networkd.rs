@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
-use zbus::{zvariant::OwnedObjectPath, Connection, Proxy};
+use zbus::Connection;
 
 /// Thin zbus wrapper around org.freedesktop.network1
 pub struct NetworkdZbus {
@@ -129,42 +129,4 @@ impl NetworkdZbus {
         self.reconfigure_link_index(idx).await
     }
 
-    /// Wait for a link to reach the given OperationalState (simple polling)
-    pub async fn wait_for_operational_state(
-        &self,
-        ifname: &str,
-        desired: &str,
-        timeout_secs: u64,
-    ) -> Result<bool> {
-        use tokio::time::{sleep, Duration, Instant};
-        let deadline = Instant::now() + Duration::from_secs(timeout_secs);
-        loop {
-            let idx = match self.ifindex_by_name(ifname).await {
-                Ok(i) => i,
-                Err(_) => {
-                    if Instant::now() >= deadline {
-                        return Ok(false);
-                    }
-                    sleep(Duration::from_millis(200)).await;
-                    continue;
-                }
-            };
-
-            let proxy = zbus::Proxy::new(
-                &self.conn,
-                "org.freedesktop.network1",
-                format!("/org/freedesktop/network1/link/_{}", idx),
-                "org.freedesktop.network1.Link",
-            )
-            .await?;
-            let op: String = proxy.get_property("OperationalState").await?;
-            if op == desired {
-                return Ok(true);
-            }
-            if Instant::now() >= deadline {
-                return Ok(false);
-            }
-            sleep(Duration::from_millis(250)).await;
-        }
-    }
 }

@@ -3,9 +3,7 @@
 use anyhow::{Context, Result};
 use std::future;
 use tracing::{debug, info};
-use zbus::fdo::IntrospectableProxy;
 
-use crate::fuse;
 use crate::services::{
     BlockchainService, BridgeService, NetworkStateService, PortManagementService,
 };

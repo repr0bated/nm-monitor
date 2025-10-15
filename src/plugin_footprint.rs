@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports)]
 //! Plugin footprint mechanism with hash for blockchain vectorization
 
 use anyhow::{Context, Result};

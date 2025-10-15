@@ -2,7 +2,6 @@
 
 use crate::networkd_dbus::NetworkdClient;
 use anyhow::Result;
-use tracing::debug;
 use zbus::{Connection, Proxy};
 
 pub async fn bridge_exists(bridge_name: &str) -> bool {

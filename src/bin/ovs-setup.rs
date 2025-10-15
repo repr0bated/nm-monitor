@@ -3,7 +3,6 @@
 //! Usage: sudo ./ovs-setup.rs
 
 use anyhow::{Context, Result};
-use std::path::Path;
 
 const NETWORKD_DIR: &str = "/etc/systemd/network";
 

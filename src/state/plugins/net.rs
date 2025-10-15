@@ -1,6 +1,6 @@
 // Net state plugin - manages core network infrastructure via systemd-networkd
 // Handles: interfaces, bridges, IPs, basic connectivity (set in stone)
-use crate::plugin_footprint::{FootprintPlugin, PluginFootprint};
+use crate::plugin_footprint::PluginFootprint;
 use crate::state::plugin::{
     ApplyResult, Checkpoint, PluginCapabilities, StateAction, StateDiff, StatePlugin,
 };

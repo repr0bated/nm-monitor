@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports)]
 //! Streaming blockchain with vectorization and dual btrfs subvolumes
 
 use anyhow::{Context, Result};

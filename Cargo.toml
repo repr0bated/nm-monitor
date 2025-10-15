@@ -3,6 +3,14 @@ name = "ovs-port-agent"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "ovs_port_agent"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ovs-port-agent"
+path = "src/main.rs"
+
 [dependencies]
 libc = "0.2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "signal", "fs"] }
