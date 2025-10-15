@@ -95,12 +95,6 @@ pub async fn execute_command_checked(program: &str, args: &[&str]) -> Result<boo
     
     Ok(output.status.success())
 }
-    Ok(output
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| line.trim().to_string())
-        .collect())
-}
 
 /// Get OVS bridge interfaces
 pub async fn get_bridge_interfaces(bridge_name: &str) -> Result<Vec<String>> {
