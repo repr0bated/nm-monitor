@@ -761,8 +761,22 @@ impl StatePlugin for NetStatePlugin {
 
         // Reload systemd-networkd if any changes were made
         if !changes_applied.is_empty() {
-            if let Err(e) = self.reload_networkd().await {
-                errors.push(format!("Failed to reload networkd: {}", e));
+            // Prefer D-Bus Reload to minimize disruption
+            match crate::zbus_networkd::NetworkdZbus::new().await {
+                Ok(client) => {
+                    if let Err(e) = client.reload().await {
+                        errors.push(format!("Failed to reload networkd (zbus): {}", e));
+                    }
+                }
+                Err(e) => {
+                    // Fallback to networkctl
+                    if let Err(e2) = self.reload_networkd().await {
+                        errors.push(format!(
+                            "Failed to reload networkd (zbus={}): {}",
+                            e, e2
+                        ));
+                    }
+                }
             }
         }
 
