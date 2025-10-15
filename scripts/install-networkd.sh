@@ -95,10 +95,20 @@ log "${BLUE}Creating systemd-networkd OVS configuration${NC}"
 cat > "$NETD_DIR/10-$BRIDGE.netdev" <<EOF
 [NetDev]
 Name=$BRIDGE
-Kind=openvswitch
+Kind=ovs-bridge
 EOF
 
-# 2. Create bridge network with IP
+# 2. Create OVS port for uplink
+cat > "$NETD_DIR/15-$UPLINK-port.netdev" <<EOF
+[NetDev]
+Name=$UPLINK-port
+Kind=ovs-port
+
+[OVSPort]
+Bridge=$BRIDGE
+EOF
+
+# 3. Create bridge network with IP
 cat > "$NETD_DIR/30-$BRIDGE.network" <<EOF
 [Match]
 Name=$BRIDGE
@@ -112,13 +122,13 @@ ConfigureWithoutCarrier=yes
 IgnoreCarrierLoss=yes
 EOF
 
-# 3. Create uplink network (enslaved to bridge)
+# 4. Create uplink network (enslaved to OVS port)
 cat > "$NETD_DIR/20-$UPLINK.network" <<EOF
 [Match]
 Name=$UPLINK
 
 [Network]
-Bridge=$BRIDGE
+Bridge=$UPLINK-port
 ConfigureWithoutCarrier=yes
 IgnoreCarrierLoss=yes
 EOF
