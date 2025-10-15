@@ -3,7 +3,7 @@
 
 echo "🔧 APPLYING QUICK NETWORK FIXES"
 echo "==============================="
-
+###
 # Fix 1: AppArmor restrictions
 echo "1️⃣  FIXING APPARMOR RESTRICTIONS..."
 sudo aa-complain dhclient || echo "AppArmor not available"
