@@ -47,14 +47,14 @@ Rust agent that provides **zero-connectivity-loss** OVS bridge management throug
 git clone https://github.com/repr0bated/nm-monitor.git
 cd nm-monitor
 cargo build --release
-sudo ./scripts/install.sh --bridge ovsbr0 --uplink enp2s0 --system
+sudo ./scripts/install.sh --bridge vmbr0 --uplink enp2s0 --system
 ```
 
 ### **Proxmox VE Installation**
 ```bash
 # Install with Proxmox integration
 sudo ./scripts/install.sh \
-  --bridge ovsbr0 \
+  --bridge vmbr0 \
   --uplink vmbr0 \
   --with-ovsbr1 \
   --system \
@@ -65,7 +65,7 @@ sudo ./scripts/install.sh \
 ```bash
 # Install for Netmaker mesh networking
 sudo ./scripts/install.sh \
-  --bridge ovsbr0 \
+  --bridge vmbr0 \
   --uplink enp2s0 \
   --with-ovsbr1 \
   --system
@@ -75,7 +75,7 @@ sudo ./scripts/install.sh \
 
 | Option | Description | Use Case |
 |--------|-------------|----------|
-| `--bridge NAME` | Set bridge name (default: ovsbr0) | Custom bridge naming |
+| `--bridge NAME` | Set bridge name (default: vmbr0) | Custom bridge naming |
 | `--uplink IFACE` | Physical interface to enslave | Internet connectivity |
 | `--with-ovsbr1` | Create secondary bridge for containers | Isolated container network |
 | `--purge-bridges` | Remove existing bridges first | Clean slate installation |
@@ -93,12 +93,12 @@ dbus-send --system --dest=dev.ovs.PortAgent1 --type=method_call \
 # Validate bridge connectivity
 dbus-send --system --dest=dev.ovs.PortAgent1 --type=method_call \
   /dev/ovs/PortAgent1 dev.ovs.PortAgent1.validate_bridge_connectivity \
-  string:ovsbr0
+  string:vmbr0
 
 # Get bridge topology
 dbus-send --system --dest=dev.ovs.PortAgent1 --type=method_call \
   /dev/ovs/PortAgent1 dev.ovs.PortAgent1.get_bridge_topology \
-  string:ovsbr0
+  string:vmbr0
 ```
 
 ### **Blockchain Ledger Operations**
@@ -131,7 +131,7 @@ dbus-send --system --dest=dev.ovs.PortAgent1 --type=method_call \
 # Perform atomic bridge operation
 dbus-send --system --dest=dev.ovs.PortAgent1 --type=method_call \
   /dev/ovs/PortAgent1 dev.ovs.PortAgent1.atomic_bridge_operation \
-  string:ovsbr0 string:create_checkpoint
+  string:vmbr0 string:create_checkpoint
 ```
 
 ## ⛓️ Blockchain Ledger System
@@ -298,7 +298,7 @@ OVS Bridge (ovsbr1) ← Netmaker Mesh Network
 └─────────────────────────────────────────────────────────────┘
 ┌─────────────────────────────────────────────────────────────┐
 │                 OVS Bridge Layer                           │
-│  - ovsbr0: Main bridge with uplink                        │
+│  - vmbr0: Main bridge with uplink                        │
 │  - ovsbr1: Container/Docker bridge                        │
 │  - NetworkManager-Compliant Operations                    │
 └─────────────────────────────────────────────────────────────┘
@@ -397,7 +397,7 @@ dbus-send --system --dest=dev.ovs.PortAgent1 --type=method_call \
 # Verify bridge state
 dbus-send --system --dest=dev.ovs.PortAgent1 --type=method_call \
   /dev/ovs/PortAgent1 dev.ovs.PortAgent1.validate_bridge_connectivity \
-  string:ovsbr0
+  string:vmbr0
 ```
 
 ### **Debugging Commands**
@@ -418,7 +418,7 @@ dbus-send --system --dest=dev.ovs.PortAgent1 --type=method_call \
 # Bridge topology analysis
 dbus-send --system --dest=dev.ovs.PortAgent1 --type=method_call \
   /dev/ovs/PortAgent1 dev.ovs.PortAgent1.get_bridge_topology \
-  string:ovsbr0
+  string:vmbr0
 ```
 
 ### **Log Analysis**
@@ -493,16 +493,16 @@ sudo journalctl -u NetworkManager --since "1 hour ago"
 
 ### **Example 1: Proxmox VE Cluster**
 ```bash
-# Primary Proxmox node with ovsbr0
+# Primary Proxmox node with vmbr0
 sudo ./scripts/install.sh \
-  --bridge ovsbr0 \
+  --bridge vmbr0 \
   --uplink vmbr0 \
   --with-ovsbr1 \
   --system
 
 # Secondary nodes join cluster
 sudo ./scripts/install.sh \
-  --bridge ovsbr0 \
+  --bridge vmbr0 \
   --uplink enp2s0 \
   --system
 ```
@@ -511,7 +511,7 @@ sudo ./scripts/install.sh \
 ```bash
 # Netmaker server node
 sudo ./scripts/install.sh \
-  --bridge ovsbr0 \
+  --bridge vmbr0 \
   --uplink enp2s0 \
   --with-ovsbr1 \
   --system
@@ -524,7 +524,7 @@ sudo ./scripts/install.sh \
 ```bash
 # Swarm manager nodes
 sudo ./scripts/install.sh \
-  --bridge ovsbr0 \
+  --bridge vmbr0 \
   --uplink enp2s0 \
   --with-ovsbr1 \
   --system
@@ -578,7 +578,7 @@ File: `/etc/ovs-port-agent/config.toml`
 
 ```toml
 # Name of the Open vSwitch bridge to manage
-bridge_name = "ovsbr0"
+bridge_name = "vmbr0"
 
 # Interfaces file to update for Proxmox visibility
 interfaces_path = "/etc/network/interfaces"
@@ -651,7 +651,7 @@ sudo ./target/release/ovs-port-agent introspect
 ```
 
 ## Proxmox notes
-- `ovsbr0` can replace `vmbr0` as the host bridge. Move host IP to `ovsbr0` and enslave the NIC.
+- `vmbr0` can replace `vmbr0` as the host bridge. Move host IP to `vmbr0` and enslave the NIC.
 - Proxmox GUI will display ports listed in the bounded block of `/etc/network/interfaces`.
 - Container interfaces are automatically named using the `vi{VMID}` format (e.g., `vi100`, `vi101`).
 

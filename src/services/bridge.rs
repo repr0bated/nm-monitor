@@ -296,8 +296,8 @@ mod tests {
 
     #[test]
     fn test_bridge_service_creation() {
-        let service = BridgeService::new("ovsbr0");
-        assert_eq!(service.bridge_name, "ovsbr0");
+        let service = BridgeService::new("vmbr0");
+        assert_eq!(service.bridge_name, "vmbr0");
     }
 
     #[tokio::test]

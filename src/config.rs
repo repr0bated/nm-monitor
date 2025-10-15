@@ -158,7 +158,7 @@ pub struct LoggingConfig {
 impl Default for BridgeConfig {
     fn default() -> Self {
         Self {
-            name: "ovsbr0".to_string(),
+            name: "vmbr0".to_string(),
             uplink: None,
             datapath_type: None,
             fail_mode: None,

@@ -1,7 +1,7 @@
 # ovs-port-agent configuration
 
 # Name of the Open vSwitch bridge to manage
-bridge_name = "ovsbr0"
+bridge_name = "vmbr0"
 
 # Interfaces file to update for Proxmox visibility
 interfaces_path = "/etc/network/interfaces"

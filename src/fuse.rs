@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -10,6 +11,72 @@ use std::sync::{Arc, Mutex};
 /// FUSE mount point for Proxmox veth interface binding
 const FUSE_MOUNT_BASE: &str = "/var/lib/ovs-port-agent/fuse";
 const PROXMOX_API_BASE: &str = "/var/lib/ovs-port-agent/proxmox";
+
+/// Cryptographic hash footprint for network elements
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HashFootprint {
+    /// SHA-256 hash of the complete configuration
+    pub config_hash: String,
+    /// SHA-256 hash of the runtime state (timestamp)
+    pub state_hash: String,
+    /// Combined fingerprint (hash of config + state)
+    pub fingerprint: String,
+    /// Timestamp when footprint was created
+    pub created_at: String,
+    /// Fields included in the hash (for verification)
+    pub hashed_fields: Vec<String>,
+    /// Algorithm used (for future flexibility)
+    pub algorithm: String,
+}
+
+impl HashFootprint {
+    /// Create new footprint from configuration
+    pub fn from_config<T: Serialize>(config: &T) -> Result<Self> {
+        let config_json = serde_json::to_string(config)
+            .context("Failed to serialize config for hashing")?;
+        let config_hash = Self::hash_string(&config_json);
+        
+        let created_at = chrono::Utc::now().to_rfc3339();
+        let state_hash = Self::hash_string(&created_at);
+        
+        let fingerprint = Self::hash_string(&format!("{}:{}", config_hash, state_hash));
+        
+        let hashed_fields = Self::extract_fields(config)?;
+        
+        Ok(Self {
+            config_hash,
+            state_hash,
+            fingerprint,
+            created_at,
+            hashed_fields,
+            algorithm: "SHA-256".to_string(),
+        })
+    }
+    
+    /// Verify footprint matches current configuration
+    pub fn verify<T: Serialize>(&self, config: &T) -> Result<bool> {
+        let config_json = serde_json::to_string(config)
+            .context("Failed to serialize config for verification")?;
+        let current_hash = Self::hash_string(&config_json);
+        Ok(current_hash == self.config_hash)
+    }
+    
+    fn hash_string(data: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(data.as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
+    
+    fn extract_fields<T: Serialize>(config: &T) -> Result<Vec<String>> {
+        let value = serde_json::to_value(config)
+            .context("Failed to extract fields from config")?;
+        if let Some(obj) = value.as_object() {
+            Ok(obj.keys().cloned().collect())
+        } else {
+            Ok(vec![])
+        }
+    }
+}
 
 /// Interface binding information for Proxmox integration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,6 +88,35 @@ pub struct InterfaceBinding {
     pub bridge: String,
     pub created_at: String,
     pub bind_mount: String,
+    /// Hash footprint for integrity verification
+    pub footprint: HashFootprint,
+    /// Link to blockchain ledger block
+    pub ledger_block_hash: Option<String>,
+}
+
+impl InterfaceBinding {
+    /// Verify binding hasn't been tampered with
+    pub fn verify_integrity(&self) -> Result<bool> {
+        // Create a temporary binding without footprint for verification
+        let temp_binding = InterfaceBinding {
+            proxmox_veth: self.proxmox_veth.clone(),
+            ovs_interface: self.ovs_interface.clone(),
+            vmid: self.vmid,
+            container_id: self.container_id.clone(),
+            bridge: self.bridge.clone(),
+            created_at: self.created_at.clone(),
+            bind_mount: self.bind_mount.clone(),
+            footprint: HashFootprint::default(),
+            ledger_block_hash: None,
+        };
+        
+        self.footprint.verify(&temp_binding)
+    }
+    
+    /// Get the unique fingerprint
+    pub fn fingerprint(&self) -> &str {
+        &self.footprint.fingerprint
+    }
 }
 
 #[allow(dead_code)]
@@ -132,7 +228,7 @@ pub fn cleanup_all_mounts() -> Result<()> {
     Ok(())
 }
 
-/// Enhanced binding with Proxmox API compatibility
+/// Enhanced binding with Proxmox API compatibility and hash footprint
 pub fn bind_veth_interface_enhanced(
     proxmox_veth: &str,
     ovs_interface: &str,
@@ -140,14 +236,36 @@ pub fn bind_veth_interface_enhanced(
     container_id: &str,
     bridge: &str,
 ) -> Result<InterfaceBinding> {
+    let created_at = chrono::Utc::now().to_rfc3339();
+    let bind_mount = format!("{}/{}", FUSE_MOUNT_BASE, ovs_interface);
+    
+    // Create temporary binding without footprint for hashing
+    let temp_binding = InterfaceBinding {
+        proxmox_veth: proxmox_veth.to_string(),
+        ovs_interface: ovs_interface.to_string(),
+        vmid,
+        container_id: container_id.to_string(),
+        bridge: bridge.to_string(),
+        created_at: created_at.clone(),
+        bind_mount: bind_mount.clone(),
+        footprint: HashFootprint::default(),
+        ledger_block_hash: None,
+    };
+    
+    // Generate cryptographic footprint
+    let footprint = HashFootprint::from_config(&temp_binding)
+        .context("Failed to generate hash footprint")?;
+    
     let binding = InterfaceBinding {
         proxmox_veth: proxmox_veth.to_string(),
         ovs_interface: ovs_interface.to_string(),
         vmid,
         container_id: container_id.to_string(),
         bridge: bridge.to_string(),
-        created_at: chrono::Utc::now().to_rfc3339(),
-        bind_mount: format!("{}/{}", FUSE_MOUNT_BASE, ovs_interface),
+        created_at,
+        bind_mount,
+        footprint,
+        ledger_block_hash: None,
     };
 
     // Create the standard bind mount
@@ -160,8 +278,8 @@ pub fn bind_veth_interface_enhanced(
     store_binding_info(&binding)?;
 
     info!(
-        "Enhanced binding created: {} -> {} (VMID: {})",
-        proxmox_veth, ovs_interface, vmid
+        "Enhanced binding created: {} -> {} (VMID: {}, Fingerprint: {})",
+        proxmox_veth, ovs_interface, vmid, &binding.footprint.fingerprint[..16]
     );
     Ok(binding)
 }

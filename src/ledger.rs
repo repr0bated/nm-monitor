@@ -3,7 +3,9 @@ use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::io::Write;
+use std::fs::{File, OpenOptions};
+use std::io::{BufWriter, Write};
+use std::sync::{Arc, Mutex};
 use std::{
     fs,
     path::PathBuf,
@@ -54,6 +56,8 @@ pub struct BlockchainLedger {
     genesis_hash: String,
     /// Registered data source plugins
     plugins: HashMap<String, Box<dyn LedgerPlugin>>,
+    /// Persistent buffered writer (keeps file open)
+    writer: Arc<Mutex<BufWriter<File>>>,
 }
 
 /// Plugin trait for different data sources
@@ -322,12 +326,22 @@ impl BlockchainLedger {
         plugins.insert("users".to_string(), Box::new(UserPlugin));
         plugins.insert("storage".to_string(), Box::new(StoragePlugin));
 
+        // Open file once with append mode
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .with_context(|| format!("Failed to open ledger at {:?}", path))?;
+        
+        let writer = Arc::new(Mutex::new(BufWriter::new(file)));
+
         Ok(Self {
             path,
             height,
             last_hash,
             genesis_hash,
             plugins,
+            writer,
         })
     }
 
@@ -336,31 +350,28 @@ impl BlockchainLedger {
         // Validate block structure
         self.validate_block(&block)?;
 
-        // Calculate block hash
-        let hash = self.calculate_hash(&block)?;
-
-        // Create complete block
+        // Create complete block with updated height and prev_hash
         let mut complete_block = block;
         complete_block.height = self.height + 1;
         complete_block.prev_hash = self.last_hash.clone();
-        complete_block.hash = hash;
+        
+        // Calculate block hash AFTER setting height/prev_hash (they're part of the hash!)
+        let hash = self.calculate_hash(&complete_block)?;
+        complete_block.hash = hash.clone();
 
-        // Verify hash is correct
+        // Verify hash is correct (should always match since we just calculated it)
         let verify_hash = self.calculate_hash(&complete_block)?;
         if verify_hash != complete_block.hash {
             return Err(anyhow::anyhow!("Hash verification failed"));
         }
 
-        // Write to ledger file
+        // Write to ledger file using persistent writer (no open/close overhead!)
         let line = serde_json::to_string(&complete_block)? + "\n";
-        let mut f = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)
-            .with_context(|| format!("open ledger {}", self.path.display()))?;
-
-        f.write_all(line.as_bytes())
+        let mut writer = self.writer.lock().unwrap();
+        writer.write_all(line.as_bytes())
             .with_context(|| "append to ledger")?;
+        writer.flush()
+            .with_context(|| "flush ledger to disk")?;
 
         // Update chain state
         self.height = complete_block.height;
@@ -575,6 +586,15 @@ impl BlockchainLedger {
         hasher.update(metadata_str.as_bytes());
 
         Ok(format!("{:x}", hasher.finalize()))
+    }
+}
+
+impl Drop for BlockchainLedger {
+    fn drop(&mut self) {
+        // Ensure all buffered data is written before dropping
+        if let Ok(mut writer) = self.writer.lock() {
+            let _ = writer.flush();
+        }
     }
 }
 
