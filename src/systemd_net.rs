@@ -2,6 +2,21 @@ use anyhow::{bail, Context, Result};
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use std::fs;
+
+fn write_atomic(path: &str, content: String) -> Result<()> {
+    use std::io::Write;
+    let p = std::path::Path::new(path);
+    let dir = p.parent().ok_or_else(|| anyhow::anyhow!("no parent for {}", path))?;
+    std::fs::create_dir_all(dir).ok();
+    let mut tmp = tempfile::Builder::new()
+        .prefix(".net-tmp-")
+        .tempfile_in(dir)
+        .context("create temp file")?;
+    tmp.write_all(content.as_bytes()).context("write temp file")?;
+    let (_f, tmppath) = tmp.keep().context("persist temp file")?;
+    std::fs::rename(&tmppath, p).with_context(|| format!("rename {} -> {}", tmppath.display(), path))?;
+    Ok(())
+}
 use std::process::Command;
 
 /// Systemd-networkd OVS Bridge configuration
@@ -119,7 +134,7 @@ fn create_bridge_netdev(config: &OvsBridgeConfig) -> Result<()> {
     }
 
     let netdev_path = format!("/etc/systemd/network/{}.netdev", config.name);
-    fs::write(&netdev_path, netdev_content)
+    write_atomic(&netdev_path, netdev_content)
         .with_context(|| format!("writing .netdev file for bridge {}", config.name))?;
 
     Ok(())
@@ -138,7 +153,7 @@ fn create_bridge_network(config: &OvsBridgeConfig) -> Result<()> {
     );
 
     let network_path = format!("/etc/systemd/network/{}.network", config.name);
-    fs::write(&network_path, network_content)
+    write_atomic(&network_path, network_content)
         .with_context(|| format!("writing .network file for bridge {}", config.name))?;
 
     Ok(())
@@ -166,7 +181,7 @@ pub fn create_ovs_internal_port(bridge: &str) -> Result<()> {
     );
 
     let port_netdev_path = format!("/etc/systemd/network/{}.netdev", iface_name);
-    fs::write(&port_netdev_path, port_netdev)
+    write_atomic(&port_netdev_path, port_netdev)
         .with_context(|| format!("writing internal interface .netdev for {}", iface_name))?;
 
     // Create .network for internal interface
@@ -181,7 +196,7 @@ pub fn create_ovs_internal_port(bridge: &str) -> Result<()> {
     );
 
     let port_network_path = format!("/etc/systemd/network/{}.network", iface_name);
-    fs::write(&port_network_path, port_network)
+    write_atomic(&port_network_path, port_network)
         .with_context(|| format!("writing internal interface .network for {}", iface_name))?;
 
     // Reload networkd
@@ -209,7 +224,7 @@ pub fn create_ovs_uplink_port(bridge: &str, ifname: &str) -> Result<()> {
     );
 
     let uplink_network_path = format!("/etc/systemd/network/50-{}.network", ifname);
-    fs::write(&uplink_network_path, uplink_network)
+    write_atomic(&uplink_network_path, uplink_network)
         .with_context(|| format!("writing uplink .network for {}", ifname))?;
 
     // Reload networkd
@@ -221,22 +236,27 @@ pub fn create_ovs_uplink_port(bridge: &str, ifname: &str) -> Result<()> {
 
 /// Activate bridge using systemctl
 pub fn activate_bridge(bridge: &str, wait_seconds: u32) -> Result<()> {
-    info!("Activating OVS bridge {} with systemd-networkd", bridge);
+    info!("Activating OVS bridge {} with systemd-networkd (Reload)", bridge);
 
-    // Restart systemd-networkd to pick up new configurations
-    let output = Command::new("systemctl")
-        .args(["restart", "systemd-networkd"])
+    // Prefer D-Bus Reload over service restart to minimize interruption
+    match Command::new("busctl")
+        .args([
+            "call",
+            "org.freedesktop.network1",
+            "/org/freedesktop/network1",
+            "org.freedesktop.network1.Manager",
+            "Reload",
+        ])
         .output()
-        .context("Failed to restart systemd-networkd")?;
-
-    if !output.status.success() {
-        bail!(
-            "Failed to restart systemd-networkd: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+    {
+        Ok(out) if out.status.success() => {}
+        _ => {
+            warn!("Reload via busctl failed; falling back to networkctl reload");
+            let _ = Command::new("networkctl").args(["reload"]).output();
+        }
     }
 
-    // Wait for the bridge to come up
+    // Wait briefly for networkd to apply changes
     std::thread::sleep(std::time::Duration::from_secs(wait_seconds as u64));
 
     // Check if bridge is active

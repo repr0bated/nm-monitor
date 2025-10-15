@@ -21,6 +21,7 @@ mod services;
 mod state;
 mod systemd_dbus;
 mod systemd_net;
+mod zbus_networkd;
 
 use crate::error::Result;
 use clap::{Parser, Subcommand};

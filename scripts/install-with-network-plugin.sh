@@ -14,6 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 PREFIX="/usr/local"
 ENABLE_SERVICE=0
+FORCE_NATIVE=0
 
 log() { echo -e "$1" >&2; }
 error_exit() { log "${RED}[ERROR]${NC} $1"; exit 1; }
@@ -23,6 +24,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --system) ENABLE_SERVICE=1; shift ;;
     --prefix) PREFIX="$2"; shift 2 ;;
+    --force-native) FORCE_NATIVE=1; shift ;;
     *) error_exit "Unknown argument: $1" ;;
   esac
 done
@@ -117,16 +119,36 @@ fi
 log "Creating ovsbr0 (primary bridge with uplink)..."
 
 # 1. Create ovsbr0 bridge device
-cat > "$NETD_DIR/10-ovsbr0.netdev" <<EOF
+# First, detect if systemd-networkd supports OVS kinds. We probe with a temp .netdev.
+SUPPORTS_OVS=1
+TMP_TEST="$NETD_DIR/99-ovs-test.netdev"
+cat > "$TMP_TEST" <<'EOF'
+[NetDev]
+Name=ovstest0
+Kind=ovs-bridge
+EOF
+if ! networkctl reload 2>/dev/null; then
+  busctl call org.freedesktop.network1 /org/freedesktop/network1 org.freedesktop.network1.Manager Reload >/dev/null 2>&1 || true
+fi
+sleep 1
+# Check journal for parse errors
+if journalctl -u systemd-networkd --since "-2min" --no-pager | grep -q "Failed to parse netdev kind"; then
+  SUPPORTS_OVS=0
+fi
+rm -f "$TMP_TEST" || true
+
+if [[ "$SUPPORTS_OVS" -eq 1 ]]; then
+  # 1. Create ovsbr0 bridge device with native systemd-networkd OVS support
+  cat > "$NETD_DIR/10-ovsbr0.netdev" <<EOF
 # OVS Bridge 0 - Primary bridge with uplink
 # Created: $(date)
 [NetDev]
 Name=ovsbr0
-Kind=openvswitch
+Kind=ovs-bridge
 EOF
 
 # 2. Attach uplink to bridge (IP moves from ens1 to ovsbr0)
-cat > "$NETD_DIR/20-${UPLINK}.network" <<EOF
+  cat > "$NETD_DIR/20-${UPLINK}.network" <<EOF
 # Uplink interface - attached to ovsbr0
 # IP configuration moves to bridge
 [Match]
@@ -138,7 +160,7 @@ IgnoreCarrierLoss=yes
 EOF
 
 # 3. Configure ovsbr0 with IP (atomic handoff happens here!)
-cat > "$NETD_DIR/30-ovsbr0.network" <<EOF
+  cat > "$NETD_DIR/30-ovsbr0.network" <<EOF
 # OVS Bridge 0 network configuration
 # IP moved from ${UPLINK}
 [Match]
@@ -149,11 +171,11 @@ Address=${UPLINK_IP}/${UPLINK_PREFIX}
 Gateway=${UPLINK_GW}
 EOF
 
-for dns in "${DNS_SERVERS[@]}"; do
-  echo "DNS=$dns" >> "$NETD_DIR/30-ovsbr0.network"
-done
+  for dns in "${DNS_SERVERS[@]}"; do
+    echo "DNS=$dns" >> "$NETD_DIR/30-ovsbr0.network"
+  done
 
-cat >> "$NETD_DIR/30-ovsbr0.network" <<EOF
+  cat >> "$NETD_DIR/30-ovsbr0.network" <<EOF
 IgnoreCarrierLoss=yes
 ConfigureWithoutCarrier=yes
 EOF
@@ -161,17 +183,17 @@ EOF
 log "${GREEN}✓${NC} ovsbr0 configuration created"
 
 # Create ovsbr1 (isolated bridge)
-log "Creating ovsbr1 (isolated bridge)..."
+  log "Creating ovsbr1 (isolated bridge)..."
 
-cat > "$NETD_DIR/11-ovsbr1.netdev" <<EOF
+  cat > "$NETD_DIR/11-ovsbr1.netdev" <<EOF
 # OVS Bridge 1 - Isolated bridge for containers
 # Created: $(date)
 [NetDev]
 Name=ovsbr1
-Kind=openvswitch
+Kind=ovs-bridge
 EOF
 
-cat > "$NETD_DIR/31-ovsbr1.network" <<EOF
+  cat > "$NETD_DIR/31-ovsbr1.network" <<EOF
 # OVS Bridge 1 network configuration
 [Match]
 Name=ovsbr1
@@ -185,7 +207,55 @@ IgnoreCarrierLoss=yes
 ConfigureWithoutCarrier=yes
 EOF
 
-log "${GREEN}✓${NC} ovsbr1 configuration created"
+  log "${GREEN}✓${NC} ovsbr1 configuration created"
+else
+  if [[ "$FORCE_NATIVE" -eq 1 ]]; then
+    error_exit "systemd-networkd native OVS is not supported on this system (Kind=ovs-bridge not recognized) and --force-native was specified. Aborting."
+  fi
+  log "${YELLOW}systemd-networkd appears to lack OVS netdev support (Kind=ovs-bridge not recognized).${NC}"
+  log "${YELLOW}Falling back to direct OVS setup via ovs-vsctl with an atomic IP handoff.${NC}"
+  # Create bridges and attach uplink
+  ovs-vsctl --may-exist add-br ovsbr0 || error_exit "Failed to add ovsbr0"
+  ovs-vsctl --may-exist add-br ovsbr1 || error_exit "Failed to add ovsbr1"
+  # Bring up bridges
+  ip link set ovsbr0 up || true
+  ip link set ovsbr1 up || true
+  # Attach uplink to ovsbr0 if not already
+  if ! ovs-vsctl list-ports ovsbr0 | grep -q "^${UPLINK}$"; then
+    ovs-vsctl --may-exist add-port ovsbr0 "${UPLINK}" || error_exit "Failed to add uplink ${UPLINK} to ovsbr0"
+  fi
+  # Atomic-ish IP handoff
+  if [[ -n "${UPLINK_IP}" && -n "${UPLINK_PREFIX}" ]]; then
+    ip addr del "${UPLINK_IP}/${UPLINK_PREFIX}" dev "${UPLINK}" 2>/dev/null || true
+    ip addr add "${UPLINK_IP}/${UPLINK_PREFIX}" dev ovsbr0 || error_exit "Failed to assign IP to ovsbr0"
+  fi
+  # Reset default route to use bridge
+  if [[ -n "${UPLINK_GW}" ]]; then
+    ip route del default 2>/dev/null || true
+    ip route add default via "${UPLINK_GW}" dev ovsbr0 || true
+  fi
+  # Send gratuitous ARP to refresh neighbor caches (minimize interruption)
+  if command -v arping >/dev/null 2>&1; then
+    log "Sending gratuitous ARP for ${UPLINK_IP} on ovsbr0..."
+    arping -U -I ovsbr0 -c 3 "${UPLINK_IP}" >/dev/null 2>&1 || true
+    if [[ -n "${UPLINK_GW}" ]]; then
+      arping -S "${UPLINK_IP}" -I ovsbr0 -c 2 "${UPLINK_GW}" >/dev/null 2>&1 || true
+    fi
+  fi
+  # Persist IP on ovsbr0 for future boots
+  cat > "$NETD_DIR/30-ovsbr0.network" <<EOF
+[Match]
+Name=ovsbr0
+
+[Network]
+Address=${UPLINK_IP}/${UPLINK_PREFIX}
+Gateway=${UPLINK_GW}
+EOF
+  for dns in "${DNS_SERVERS[@]}"; do
+    echo "DNS=$dns" >> "$NETD_DIR/30-ovsbr0.network"
+  done
+  log "${GREEN}✓${NC} Fallback OVS topology created"
+fi
 echo ""
 
 # Step 5: Atomic handoff via systemd-networkd reload
