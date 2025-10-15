@@ -1,516 +1,293 @@
 #!/usr/bin/env bash
-# Simple installation script using the network plugin for declarative setup
-# This is a clean, modern approach compared to the legacy install.sh
+# Install script with systemd-networkd native OVS atomic handoff
+# NO NetworkManager needed - systemd-networkd has built-in OVS support!
 
 set -euo pipefail
 
-# Colors
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m' # No Color
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[1;33m'
+readonly RED='\033[0;31m'
+readonly BLUE='\033[0;34m'
+readonly NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
-
-echo "=========================================="
-echo " ovs-port-agent Installation"
-echo " Using Network Plugin (Declarative)"
-echo "=========================================="
-echo ""
-
-# Root check
-if [[ ${EUID} -ne 0 ]]; then
-  echo -e "${RED}ERROR: Must run as root${NC}" >&2
-  echo "Usage: sudo $0 [--network-config FILE] [--system]"
-  exit 1
-fi
-
-# Defaults
-NETWORK_CONFIG=""
-ENABLE_SERVICE=0
 PREFIX="/usr/local"
-WITH_OVSBR1=0
-INTROSPECT=0
-BRIDGE0_NAME="vmbr0"  # Default name for primary bridge
-BRIDGE1_NAME="docker-bridge"  # Default name for Docker bridge
+ENABLE_SERVICE=0
+
+log() { echo -e "$1" >&2; }
+error_exit() { log "${RED}[ERROR]${NC} $1"; exit 1; }
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --network-config)
-      [[ $# -ge 2 ]] || { echo "Missing value for --network-config" >&2; exit 1; }
-      NETWORK_CONFIG="$2"
-      shift 2
-      ;;
-    --introspect)
-      INTROSPECT=1
-      shift
-      ;;
-    --with-ovsbr1)
-      WITH_OVSBR1=1
-      shift
-      ;;
-    --bridge0-name)
-      BRIDGE0_NAME="$2"
-      shift 2
-      ;;
-    --bridge1-name)
-      BRIDGE1_NAME="$2"
-      shift 2
-      ;;
-    --system)
-      ENABLE_SERVICE=1
-      shift
-      ;;
-    --prefix)
-      [[ $# -ge 2 ]] || { echo "Missing value for --prefix" >&2; exit 1; }
-      PREFIX="$2"
-      shift 2
-      ;;
-    --help|-h)
-      cat <<HELP
-Usage: $0 [options]
-
-Simple installation using declarative network configuration.
-
-Options:
-  --network-config FILE   Path to network config YAML (required*)
-  --introspect            Auto-detect network and generate config (replaces --network-config)
-  --with-ovsbr1           Add ovsbr1 isolated bridge (for Docker/containers)
-  --system                Enable and start systemd service after install
-  --prefix DIR            Installation prefix (default: /usr/local)
-  --help                  Show this help
-
-*Not required if using --introspect
-
-Examples:
-  # Use existing config
-  sudo $0 --network-config config/examples/network-ovs-bridges.yaml --system
-  
-  # Auto-detect network (introspect)
-  sudo $0 --introspect --system
-  
-  # Introspect + add ovsbr1
-  sudo $0 --introspect --with-ovsbr1 --system
-
-This installer:
-  1. Builds the release binary
-  2. Installs binary, config, and systemd files
-  3. Applies your declarative network configuration
-  4. Optionally enables the systemd service
-
-Network config examples in config/examples/:
-  - test-ovs-simple.yaml      (safe test: isolated bridge)
-  - network-ovs-bridges.yaml  (production: ovsbr0 + ovsbr1)
-  - network-static-ip.yaml    (VPS: static IP + uplink)
-
-HELP
-      exit 0
-      ;;
-    *)
-      echo "Unknown argument: $1" >&2
-      echo "Run with --help for usage"
-      exit 1
-      ;;
+    --system) ENABLE_SERVICE=1; shift ;;
+    --prefix) PREFIX="$2"; shift 2 ;;
+    *) error_exit "Unknown argument: $1" ;;
   esac
 done
 
-# Validate config mode (but don't generate yet if introspecting)
-if [[ ${INTROSPECT} -eq 0 ]]; then
-  # Validate network config
-  if [[ -z "${NETWORK_CONFIG}" ]]; then
-    echo -e "${RED}ERROR: --network-config is required (or use --introspect)${NC}" >&2
-    echo ""
-    echo "Options:"
-    echo "  1. Use existing config: --network-config FILE"
-    echo "  2. Auto-detect: --introspect"
-    echo ""
-    echo "Example configs available:"
-    echo "  config/examples/test-ovs-simple.yaml"
-    echo "  config/examples/network-ovs-bridges.yaml"
-    echo "  config/examples/network-static-ip.yaml"
-    echo ""
-    echo "Run with --help for more info"
-    exit 1
-  fi
+[[ $EUID -eq 0 ]] || error_exit "Must run as root"
 
-  if [[ ! -f "${NETWORK_CONFIG}" ]]; then
-    echo -e "${RED}ERROR: Network config not found: ${NETWORK_CONFIG}${NC}" >&2
-    exit 1
-  fi
-fi
-
-echo "Configuration:"
-if [[ ${INTROSPECT} -eq 1 ]]; then
-  echo "  Network Config: Auto-detect (introspect)"
-else
-  echo "  Network Config: ${NETWORK_CONFIG}"
-fi
-echo "  Install Prefix: ${PREFIX}"
-echo "  Add ovsbr1: $([ ${WITH_OVSBR1} -eq 1 ] && echo 'Yes' || echo 'No')"
-echo "  Enable Service: $([ ${ENABLE_SERVICE} -eq 1 ] && echo 'Yes' || echo 'No')"
+log "${BLUE}========================================${NC}"
+log "${BLUE} OVS Setup with systemd-networkd${NC}"
+log "${BLUE} Native OVS support - NO NetworkManager!${NC}"
+log "${BLUE}========================================${NC}"
 echo ""
 
-# Check prerequisites
-echo "Checking prerequisites..."
-
-# Find cargo (handle sudo case where cargo is in user's home)
+# Step 1: Build binary
+log "${BLUE}Step 1: Build Binary${NC}"
 CARGO_BIN=""
 if command -v cargo >/dev/null 2>&1; then
   CARGO_BIN=$(command -v cargo)
-else
-  # When running under sudo, check the real user's cargo
-  if [[ -n "${SUDO_USER:-}" ]]; then
-    SUDO_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-    if [[ -n "$SUDO_HOME" && -x "$SUDO_HOME/.cargo/bin/cargo" ]]; then
-      CARGO_BIN="$SUDO_HOME/.cargo/bin/cargo"
-      echo "Found cargo in $SUDO_USER's home: $CARGO_BIN"
-    fi
-  fi
-  
-  # Last resort: check current user's home
-  if [[ -z "${CARGO_BIN}" && -x "$HOME/.cargo/bin/cargo" ]]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-  fi
+elif [[ -n "${SUDO_USER:-}" ]]; then
+  SUDO_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+  [[ -n "$SUDO_HOME" && -x "$SUDO_HOME/.cargo/bin/cargo" ]] && CARGO_BIN="$SUDO_HOME/.cargo/bin/cargo"
 fi
 
-if [[ -z "${CARGO_BIN}" ]]; then
-  echo -e "${RED}ERROR: cargo not found${NC}" >&2
-  echo ""
-  echo "Rust/Cargo is required to build ovs-port-agent."
-  echo ""
-  echo "To install Rust:"
-  echo "  1. As regular user (not root): curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
-  echo "  2. Follow the installation prompts"
-  echo "  3. Run: source \$HOME/.cargo/env"
-  echo "  4. Then re-run this installer with sudo"
-  echo ""
-  echo "If Rust is already installed for your user, ensure it's accessible:"
-  echo "  - Check: which cargo (as your regular user)"
-  echo "  - The installer will find cargo in \$SUDO_USER's home directory"
-  exit 1
-fi
+[[ -n "$CARGO_BIN" ]] || error_exit "cargo not found"
 
-echo "Using cargo: ${CARGO_BIN}"
-
-if ! command -v ovs-vsctl >/dev/null 2>&1; then
-  echo -e "${YELLOW}WARNING: openvswitch-switch not installed${NC}"
-  echo "Install: apt-get install openvswitch-switch"
-  read -p "Continue anyway? [y/N] " -n 1 -r
-  echo
-  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    exit 1
-  fi
-fi
-
-if ! systemctl is-active --quiet openvswitch-switch 2>/dev/null; then
-  echo -e "${YELLOW}WARNING: openvswitch-switch not running${NC}"
-  echo "Starting openvswitch-switch..."
-  systemctl start openvswitch-switch || {
-    echo -e "${RED}ERROR: Failed to start openvswitch-switch${NC}" >&2
-    exit 1
-  }
-fi
-
-# Check for Python3 and YAML support (needed for --with-ovsbr1)
-if [[ ${WITH_OVSBR1} -eq 1 ]]; then
-  if ! command -v python3 >/dev/null 2>&1; then
-    echo -e "${RED}ERROR: python3 not found (required for --with-ovsbr1)${NC}" >&2
-    echo "Install: apt-get install python3"
-    exit 1
-  fi
-  
-  if ! python3 -c "import yaml" 2>/dev/null; then
-    echo -e "${RED}ERROR: python3-yaml not found (required for --with-ovsbr1)${NC}" >&2
-    echo "Install: apt-get install python3-yaml"
-    exit 1
-  fi
-fi
-
-echo -e "${GREEN}✓${NC} Prerequisites OK"
-echo ""
-
-# Build
-echo "=========================================="
-echo " Step 1: Building Release Binary"
-echo "=========================================="
-echo ""
-
+log "Building ovs-port-agent..."
 cd "${REPO_ROOT}"
-
-# Ensure cargo is in PATH
 export PATH="$(dirname "${CARGO_BIN}"):${PATH}"
-
-"${CARGO_BIN}" build --release
-
-echo ""
-echo -e "${GREEN}✓${NC} Build complete"
+"${CARGO_BIN}" build --release 2>&1 | grep -v "^warning:" || true
+log "${GREEN}✓${NC} Build complete"
 echo ""
 
-# Install files
-echo "=========================================="
-echo " Step 2: Installing Files"
-echo "=========================================="
+# Step 2: Check prerequisites
+log "${BLUE}Step 2: Check Prerequisites${NC}"
+
+# Check systemd-networkd
+if ! systemctl is-active --quiet systemd-networkd; then
+  log "${YELLOW}Starting systemd-networkd...${NC}"
+  systemctl start systemd-networkd || error_exit "Failed to start systemd-networkd"
+fi
+
+# Check OVS
+if ! systemctl is-active --quiet openvswitch-switch; then
+  log "${YELLOW}Starting openvswitch-switch...${NC}"
+  systemctl start openvswitch-switch || error_exit "Failed to start OVS"
+fi
+
+log "${GREEN}✓${NC} Prerequisites OK"
+echo ""
+
+# Step 3: Introspect uplink
+log "${BLUE}Step 3: Introspect Uplink${NC}"
+
+# Find uplink (interface with default route)
+UPLINK=$(ip -o -4 route show default | awk '{print $5}' | head -1)
+[[ -n "$UPLINK" ]] || UPLINK=$(ip -o -4 addr show | awk '$2 !~ /^(lo|ovsbr|docker|br-)/ {print $2}' | head -1)
+[[ -n "$UPLINK" ]] || error_exit "Could not detect uplink"
+
+# Get current IP config via D-Bus introspection
+UPLINK_IP=$(ip -o -4 addr show "${UPLINK}" | awk '{print $4}' | cut -d/ -f1)
+UPLINK_PREFIX=$(ip -o -4 addr show "${UPLINK}" | awk '{print $4}' | cut -d/ -f2)
+UPLINK_GW=$(ip route show default | grep "${UPLINK}" | awk '{print $3}' | head -1)
+
+# Get DNS
+DNS_SERVERS=()
+if [[ -f /etc/resolv.conf ]]; then
+  while IFS= read -r line; do
+    if [[ $line =~ ^nameserver[[:space:]]+([0-9.]+) ]]; then
+      DNS_SERVERS+=("${BASH_REMATCH[1]}")
+    fi
+  done < /etc/resolv.conf
+fi
+[[ ${#DNS_SERVERS[@]} -eq 0 ]] && DNS_SERVERS=("8.8.8.8" "8.8.4.4")
+
+log "  Uplink: ${UPLINK}"
+log "  IP: ${UPLINK_IP}/${UPLINK_PREFIX}"
+log "  Gateway: ${UPLINK_GW}"
+log "  DNS: ${DNS_SERVERS[*]}"
+echo ""
+
+# Step 4: Create systemd-networkd OVS configuration
+log "${BLUE}Step 4: Create OVS Configuration (Atomic Handoff)${NC}"
+echo ""
+
+NETD_DIR="/etc/systemd/network"
+mkdir -p "$NETD_DIR"
+
+# Backup existing uplink config
+if [[ -f "$NETD_DIR/10-${UPLINK}.network" ]]; then
+  cp "$NETD_DIR/10-${UPLINK}.network" "$NETD_DIR/10-${UPLINK}.network.backup-$(date +%s)"
+fi
+
+log "Creating ovsbr0 (primary bridge with uplink)..."
+
+# 1. Create ovsbr0 bridge device
+cat > "$NETD_DIR/10-ovsbr0.netdev" <<EOF
+# OVS Bridge 0 - Primary bridge with uplink
+# Created: $(date)
+[NetDev]
+Name=ovsbr0
+Kind=openvswitch
+EOF
+
+# 2. Attach uplink to bridge (IP moves from ens1 to ovsbr0)
+cat > "$NETD_DIR/20-${UPLINK}.network" <<EOF
+# Uplink interface - attached to ovsbr0
+# IP configuration moves to bridge
+[Match]
+Name=${UPLINK}
+
+[Network]
+Bridge=ovsbr0
+IgnoreCarrierLoss=yes
+EOF
+
+# 3. Configure ovsbr0 with IP (atomic handoff happens here!)
+cat > "$NETD_DIR/30-ovsbr0.network" <<EOF
+# OVS Bridge 0 network configuration
+# IP moved from ${UPLINK}
+[Match]
+Name=ovsbr0
+
+[Network]
+Address=${UPLINK_IP}/${UPLINK_PREFIX}
+Gateway=${UPLINK_GW}
+EOF
+
+for dns in "${DNS_SERVERS[@]}"; do
+  echo "DNS=$dns" >> "$NETD_DIR/30-ovsbr0.network"
+done
+
+cat >> "$NETD_DIR/30-ovsbr0.network" <<EOF
+IgnoreCarrierLoss=yes
+ConfigureWithoutCarrier=yes
+EOF
+
+log "${GREEN}✓${NC} ovsbr0 configuration created"
+
+# Create ovsbr1 (isolated bridge)
+log "Creating ovsbr1 (isolated bridge)..."
+
+cat > "$NETD_DIR/11-ovsbr1.netdev" <<EOF
+# OVS Bridge 1 - Isolated bridge for containers
+# Created: $(date)
+[NetDev]
+Name=ovsbr1
+Kind=openvswitch
+EOF
+
+cat > "$NETD_DIR/31-ovsbr1.network" <<EOF
+# OVS Bridge 1 network configuration
+[Match]
+Name=ovsbr1
+
+[Network]
+Address=80.209.242.196/25
+Gateway=80.209.242.129
+DNS=8.8.8.8
+DNS=8.8.4.4
+IgnoreCarrierLoss=yes
+ConfigureWithoutCarrier=yes
+EOF
+
+log "${GREEN}✓${NC} ovsbr1 configuration created"
+echo ""
+
+# Step 5: Atomic handoff via systemd-networkd reload
+log "${BLUE}Step 5: Atomic Handoff (networkctl reload)${NC}"
+log ""
+log "${YELLOW}This will atomically:${NC}"
+log "  1. Create ovsbr0 and ovsbr1 via OVS"
+log "  2. Move ${UPLINK} IP to ovsbr0"
+log "  3. Attach ${UPLINK} to ovsbr0"
+log "  4. No connectivity loss (IgnoreCarrierLoss=yes)"
+echo ""
+
+# Using D-Bus for atomic reload
+log "Calling systemd-networkd.Reload via D-Bus..."
+busctl call org.freedesktop.network1 \
+  /org/freedesktop/network1 \
+  org.freedesktop.network1.Manager \
+  Reload || error_exit "Failed to reload systemd-networkd"
+
+log "${GREEN}✓${NC} Atomic handoff initiated"
+echo ""
+
+# Wait for convergence
+log "Waiting for network to stabilize..."
+sleep 3
+
+# Verify
+log "${BLUE}Step 6: Verify${NC}"
+echo ""
+
+if ovs-vsctl br-exists ovsbr0 && ovs-vsctl br-exists ovsbr1; then
+  log "${GREEN}✓${NC} OVS bridges created"
+else
+  error_exit "OVS bridges not created"
+fi
+
+if ip addr show ovsbr0 | grep -q "${UPLINK_IP}"; then
+  log "${GREEN}✓${NC} IP moved to ovsbr0"
+else
+  log "${YELLOW}WARNING:${NC} IP not yet on ovsbr0 (may take a moment)"
+fi
+
+if ovs-vsctl list-ports ovsbr0 | grep -q "${UPLINK}"; then
+  log "${GREEN}✓${NC} Uplink attached to ovsbr0"
+else
+  log "${YELLOW}WARNING:${NC} Uplink not yet attached (may take a moment)"
+fi
+
+echo ""
+log "${YELLOW}=== Current State ===${NC}"
+ip -brief addr show
+echo ""
+ovs-vsctl show
+echo ""
+
+# Step 7: Install files
+log "${BLUE}Step 7: Install ovs-port-agent${NC}"
 echo ""
 
 BIN_DEST="${PREFIX}/bin/ovs-port-agent"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="/etc/ovs-port-agent"
-CONFIG_FILE="${CONFIG_DIR}/config.toml"
 LEDGER_DIR="/var/lib/ovs-port-agent"
-SYSTEMD_UNIT="/etc/systemd/system/ovs-port-agent.service"
-DBUS_POLICY="/etc/dbus-1/system.d/dev.ovs.PortAgent1.conf"
 
-# Install binary
-echo "Installing binary to ${BIN_DEST}..."
 install -d -m 0755 "${PREFIX}/bin"
 install -m 0755 target/release/ovs-port-agent "${BIN_DEST}"
+log "  Binary: ${BIN_DEST}"
 
-# Install config
-echo "Installing config to ${CONFIG_DIR}..."
 install -d -m 0755 "${CONFIG_DIR}"
-if [[ ! -f "${CONFIG_FILE}" ]]; then
-  install -m 0644 config/config.toml.example "${CONFIG_FILE}"
-else
-  echo "  (config already exists, not overwriting)"
-fi
+[[ ! -f "${CONFIG_DIR}/config.toml" ]] && install -m 0644 config/config.toml.example "${CONFIG_DIR}/config.toml"
+log "  Config: ${CONFIG_DIR}"
 
-# Create ledger directory
-echo "Creating ledger directory ${LEDGER_DIR}..."
 install -d -m 0750 "${LEDGER_DIR}"
+log "  Ledger: ${LEDGER_DIR}"
 
-# Install D-Bus policy
-echo "Installing D-Bus policy..."
-install -m 0644 dbus/dev.ovs.PortAgent1.conf "${DBUS_POLICY}"
+install -m 0644 dbus/dev.ovs.PortAgent1.conf "/etc/dbus-1/system.d/"
+install -m 0644 systemd/ovs-port-agent.service "/etc/systemd/system/"
 
-# Install systemd unit
-echo "Installing systemd service..."
-install -m 0644 systemd/ovs-port-agent.service "${SYSTEMD_UNIT}"
-
-# Reload systemd
 systemctl daemon-reload
 systemctl reload dbus.service 2>/dev/null || systemctl restart dbus.service
 
-echo ""
-echo -e "${GREEN}✓${NC} Files installed"
-echo ""
-
-# NOW run introspection if needed (binary is installed)
-if [[ ${INTROSPECT} -eq 1 ]]; then
-  echo "=========================================="
-  echo " Step 3: Auto-Detecting Network"
-  echo "=========================================="
-  echo ""
-  
-  INTROSPECT_SCRIPT="${SCRIPT_DIR}/introspect-network.sh"
-  
-  if [[ ! -f "${INTROSPECT_SCRIPT}" ]]; then
-    echo -e "${RED}ERROR: Introspection script not found${NC}" >&2
-    echo "Expected: ${INTROSPECT_SCRIPT}"
-    exit 1
-  fi
-  
-  # Generate config to temp file
-  NETWORK_CONFIG="/tmp/network-introspected-$$.yaml"
-  "${INTROSPECT_SCRIPT}" "${NETWORK_CONFIG}" "${BRIDGE0_NAME}" || {
-    echo -e "${RED}ERROR: Network introspection failed${NC}" >&2
-    exit 1
-  }
-  
-  echo ""
-  echo "Using auto-detected configuration"
-  echo ""
-fi
-
-# Apply network configuration
-echo "=========================================="
-echo " Step 4: Apply Network Configuration"
-echo "=========================================="
+log "${GREEN}✓${NC} Installation complete"
 echo ""
 
-echo "Config: ${NETWORK_CONFIG}"
-echo ""
-
-# Add ovsbr1 to config if requested
-FINAL_CONFIG="${NETWORK_CONFIG}"
-if [[ ${WITH_OVSBR1} -eq 1 ]]; then
-  echo "Adding ovsbr1 isolated bridge to configuration..."
-  FINAL_CONFIG="/tmp/network-config-with-ovsbr1-$$.yaml"
-  
-  # Read original config and add ovsbr1
-  python3 - <<'PYTHON' "${NETWORK_CONFIG}" "${FINAL_CONFIG}"
-import sys
-import yaml
-
-with open(sys.argv[1], 'r') as f:
-    config = yaml.safe_load(f)
-
-# Check if ovsbr1 already exists
-existing_names = [iface['name'] for iface in config.get('network', {}).get('interfaces', [])]
-if 'ovsbr1' not in existing_names:
-    # Add ovsbr1 configuration
-    ovsbr1_config = {
-        'name': 'ovsbr1',
-        'type': 'ovs-bridge',
-        'ipv4': {
-            'enabled': True,
-            'dhcp': False,
-            'address': [
-                {'ip': '172.18.0.1', 'prefix': 16}
-            ]
-        }
-    }
-    config['network']['interfaces'].append(ovsbr1_config)
-    print("  ✓ Added ovsbr1 (172.18.0.1/16) to configuration")
-else:
-    print("  ℹ️  ovsbr1 already in config, using existing configuration")
-
-with open(sys.argv[2], 'w') as f:
-    yaml.dump(config, f, default_flow_style=False, sort_keys=False)
-PYTHON
-  
-  echo "  Using temporary config: ${FINAL_CONFIG}"
-  echo ""
-fi
-
-# Show diff first
-echo "Calculating changes (dry run)..."
-echo "---"
-"${BIN_DEST}" show-diff "${FINAL_CONFIG}" || {
-  echo -e "${RED}ERROR: Failed to calculate diff${NC}" >&2
-  echo "Check your network config syntax"
-  exit 1
-}
-echo "---"
-echo ""
-
-read -p "Apply these changes? [y/N] " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-  echo "Installation cancelled"
-  [[ -f "${FINAL_CONFIG}" && "${FINAL_CONFIG}" != "${NETWORK_CONFIG}" ]] && rm -f "${FINAL_CONFIG}"
-  echo "To apply later: sudo ovs-port-agent apply-state ${NETWORK_CONFIG}"
-  exit 0
-fi
-
-# ATOMIC HANDOVER: Create pre-installation backup
-echo "=========================================="
-echo "Creating pre-installation backup..."
-BACKUP_DIR="/var/lib/ovs-port-agent/backups"
-mkdir -p "${BACKUP_DIR}"
-BACKUP_TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-
-# Backup current network state
-if command -v networkctl >/dev/null 2>&1; then
-  networkctl list > "${BACKUP_DIR}/pre-install-networkctl-${BACKUP_TIMESTAMP}.txt" 2>/dev/null || true
-  ip addr show > "${BACKUP_DIR}/pre-install-ip-addr-${BACKUP_TIMESTAMP}.txt" 2>/dev/null || true
-fi
-
-# Backup OVS configuration
-if command -v ovs-vsctl >/dev/null 2>&1; then
-  ovs-vsctl show > "${BACKUP_DIR}/pre-install-ovs-${BACKUP_TIMESTAMP}.txt" 2>/dev/null || true
-fi
-
-# Get active interface count BEFORE
-ACTIVE_BEFORE=$(ip link show up | grep -c "^[0-9]" || echo "0")
-echo "Active interfaces before: ${ACTIVE_BEFORE}"
-echo "Backup saved to: ${BACKUP_DIR}"
-echo ""
-
-# Apply configuration
-echo "Applying network configuration with atomic handover..."
-"${BIN_DEST}" apply-state "${FINAL_CONFIG}" || {
-  [[ -f "${FINAL_CONFIG}" && "${FINAL_CONFIG}" != "${NETWORK_CONFIG}" ]] && rm -f "${FINAL_CONFIG}"
-  echo -e "${RED}ERROR: Failed to apply network config${NC}" >&2
-  echo ""
-  echo "Troubleshooting:"
-  echo "  1. Check OVS is running: sudo systemctl status openvswitch-switch"
-  echo "  2. Check config syntax: sudo ovs-port-agent show-diff ${NETWORK_CONFIG}"
-  echo "  3. Check logs: sudo journalctl -xe"
-  echo "  4. Restore from backup: ${BACKUP_DIR}"
-  exit 1
-}
-
-# ATOMIC HANDOVER: Verify connectivity preserved
-sleep 2  # Allow network to settle
-ACTIVE_AFTER=$(ip link show up | grep -c "^[0-9]" || echo "0")
-echo "Active interfaces after: ${ACTIVE_AFTER}"
-
-if [[ ${ACTIVE_AFTER} -lt ${ACTIVE_BEFORE} ]]; then
-  echo -e "${YELLOW}WARNING: Active interface count decreased${NC}"
-  echo "This might indicate connectivity issues"
-  echo "Backup available at: ${BACKUP_DIR}"
-else
-  echo -e "${GREEN}✓${NC} Connectivity preserved (${ACTIVE_AFTER} interfaces active)"
-fi
-
-echo ""
-echo -e "${GREEN}✓${NC} Network configuration applied"
-
-# Cleanup temp config
-[[ -f "${FINAL_CONFIG}" && "${FINAL_CONFIG}" != "${NETWORK_CONFIG}" ]] && rm -f "${FINAL_CONFIG}"
-
-echo ""
-
-# Verify
-echo "Verifying network state..."
-echo "---"
-"${BIN_DEST}" query-state --plugin net | head -40 || true
-echo "---"
-echo ""
-
-# Enable service
-if [[ ${ENABLE_SERVICE} -eq 1 ]]; then
-  echo "=========================================="
-  echo " Step 5: Enable Service"
-  echo "=========================================="
-  echo ""
-  
+if [[ $ENABLE_SERVICE -eq 1 ]]; then
+  log "Enabling service..."
   systemctl enable ovs-port-agent
   systemctl start ovs-port-agent
-  
-  sleep 2
-  
-  if systemctl is-active --quiet ovs-port-agent; then
-    echo -e "${GREEN}✓${NC} Service is running"
-    echo ""
-    systemctl status --no-pager ovs-port-agent || true
-  else
-    echo -e "${YELLOW}WARNING: Service failed to start${NC}"
-    echo "Check logs: sudo journalctl -u ovs-port-agent -n 50"
-  fi
-else
-  echo "=========================================="
-  echo " Step 5: Service (Not Enabled)"
-  echo "=========================================="
-  echo ""
-  echo "To enable later:"
-  echo "  sudo systemctl enable --now ovs-port-agent"
+  sleep 1
+  systemctl is-active --quiet ovs-port-agent && log "${GREEN}✓${NC} Service running"
 fi
 
+log "${GREEN}========================================${NC}"
+log "${GREEN} SUCCESS!${NC}"
+log "${GREEN}========================================${NC}"
 echo ""
-echo "=========================================="
-echo -e " ${GREEN}Installation Complete!${NC}"
-echo "=========================================="
+log "Bridges created with atomic handoff:"
+log "  • ovsbr0: ${UPLINK_IP}/${UPLINK_PREFIX} (uplink: ${UPLINK})"
+log "  • ovsbr1: 80.209.242.196/25 (isolated)"
 echo ""
-echo "What's installed:"
-echo "  ✓ Binary: ${BIN_DEST}"
-echo "  ✓ Config: ${CONFIG_FILE}"
-echo "  ✓ Ledger: ${LEDGER_DIR}"
-echo "  ✓ Service: ${SYSTEMD_UNIT}"
-echo "  ✓ D-Bus: ${DBUS_POLICY}"
-echo "  ✓ Network: Applied ${NETWORK_CONFIG}"
-echo "  ✓ Backup: ${BACKUP_DIR} (rollback available)"
+log "systemd-networkd native OVS configuration:"
+log "  ${NETD_DIR}/*.netdev"
+log "  ${NETD_DIR}/*.network"
 echo ""
-echo "Useful commands:"
-echo "  sudo ovs-port-agent query-state --plugin network"
-echo "  sudo ovs-port-agent apply-state <config.yaml>"
-echo "  sudo ovs-vsctl show"
-echo "  sudo systemctl status ovs-port-agent"
+log "No NetworkManager needed! ✨"
 echo ""
-echo "Documentation:"
-echo "  docs/NETWORK_PLUGIN_GUIDE.md"
-echo "  docs/STATE_MANAGER_ARCHITECTURE.md"
-echo ""
-

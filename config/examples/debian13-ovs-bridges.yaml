@@ -1,4 +1,4 @@
-# #OVS Bridge Configuration for Debian 13
+# OVS Bridge Configuration for Debian 13
 # Creates ovsbr0 and ovsbr1 with specific IPs
 
 version: 1
@@ -62,6 +62,10 @@ plugins:
 
   netcfg:
     dns:
-      hostname: debian13-ovs
+      hostname: castlebox.ghostbridge.tech
       search_domains:
         - local
+    routing:
+      - destination: default
+        gateway: 80.209.240.129
+        interface: ovsbr0

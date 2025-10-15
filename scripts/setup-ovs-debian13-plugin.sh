@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# OVS Bridge Setup for Debian 13 using nm-monitor plugin system
-## Creates ovsbr0 and ovsbr1 using declarative configuration
+# OVS Bridge Setup for Debian 13
+## Uses gdbus to create bridges (accurate state), then plugin system for management
 
 set -euo pipefail
 
@@ -9,7 +9,6 @@ readonly SCRIPT_NAME="$(basename "$0")"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 readonly CONFIG_FILE="${REPO_ROOT}/config/examples/debian13-ovs-bridges.yaml"
-readonly CUSTOM_CONFIG="${1:-}"
 
 # Colors
 readonly GREEN='\033[0;32m'
@@ -35,63 +34,25 @@ fi
 
 log "${BLUE}========================================${NC}"
 log "${BLUE} OVS Bridge Setup for Debian 13${NC}"
-log "${BLUE} Using nm-monitor Plugin System${NC}"
+log "${BLUE} Phase 1: gdbus bridge creation${NC}"
+log "${BLUE} Phase 2: Plugin state management${NC}"
 log "${BLUE}========================================${NC}"
 echo ""
 
-# Check if nm-monitor is installed
-if ! command -v ovs-port-agent &> /dev/null; then
-    log "${YELLOW}[INFO]${NC} nm-monitor not installed, installing now..."
-    
-    # Run the install script with introspection
-    if [[ -f "${SCRIPT_DIR}/install-with-network-plugin.sh" ]]; then
-        log "${YELLOW}[INFO]${NC} Running nm-monitor installation with introspection..."
-        "${SCRIPT_DIR}/install-with-network-plugin.sh" --introspect --system || \
-            error_exit "Failed to install nm-monitor"
-    else
-        error_exit "install-with-network-plugin.sh not found"
-    fi
-else
-    log "${GREEN}[INFO]${NC} nm-monitor is already installed"
+# Detect primary interface
+log "${YELLOW}[INFO]${NC} Detecting primary network interface..."
+PRIMARY_IFACE=$(ip -o -4 route show default | awk '$2 !~ /^(lo|ovsbr|docker|br-|veth)/ {print $5}' | head -1)
+
+if [[ -z "$PRIMARY_IFACE" ]]; then
+    PRIMARY_IFACE=$(ip -o -4 addr show | awk '$2 !~ /^(lo|ovsbr|docker|br-|veth)/ {print $2}' | head -1)
 fi
 
-# Determine config file to use
-if [[ -n "$CUSTOM_CONFIG" ]]; then
-    if [[ -f "$CUSTOM_CONFIG" ]]; then
-        CONFIG_TO_USE="$CUSTOM_CONFIG"
-        log "${GREEN}[INFO]${NC} Using custom config: $CUSTOM_CONFIG"
-    else
-        error_exit "Custom config file not found: $CUSTOM_CONFIG"
-    fi
-else
-    # Update the example config with detected interface
-    log "${YELLOW}[INFO]${NC} Detecting primary network interface..."
-    
-    # Find interface with default route
-    PRIMARY_IFACE=$(ip -o -4 route show default | awk '$2 !~ /^(lo|ovsbr|docker|br-|veth)/ {print $5}' | head -1)
-    
-    if [[ -z "$PRIMARY_IFACE" ]]; then
-        # Fallback: find any interface with IP
-        PRIMARY_IFACE=$(ip -o -4 addr show | awk '$2 !~ /^(lo|ovsbr|docker|br-|veth)/ {print $2}' | head -1)
-    fi
-    
-    if [[ -z "$PRIMARY_IFACE" ]]; then
-        error_exit "Could not detect primary network interface"
-    fi
-    
-    log "${GREEN}[INFO]${NC} Detected primary interface: $PRIMARY_IFACE"
-    
-    # Create temporary config with detected interface
-    TEMP_CONFIG="/tmp/ovs-bridges-config-$$.yaml"
-    sed "s/ens1/${PRIMARY_IFACE}/g" "$CONFIG_FILE" > "$TEMP_CONFIG"
-    CONFIG_TO_USE="$TEMP_CONFIG"
-    
-    # Show the configuration
-    log "${BLUE}[INFO]${NC} Configuration to apply:"
-    echo ""
-    cat "$CONFIG_TO_USE"
-    echo ""
+if [[ -z "$PRIMARY_IFACE" ]]; then
+    error_exit "Could not detect primary network interface"
 fi
+
+log "${GREEN}[INFO]${NC} Detected primary interface: $PRIMARY_IFACE"
+echo ""
 
 # Show current network state
 log "${BLUE}[INFO]${NC} Current network state:"
@@ -99,36 +60,137 @@ echo ""
 ip -brief addr show
 echo ""
 
-# Query current state
-log "${YELLOW}[INFO]${NC} Querying current network state..."
-ovs-port-agent /etc/ovs-port-agent/config.toml query-state || true
+# Show configuration
+log "${BLUE}[INFO]${NC} Bridges to create via gdbus:"
 echo ""
-
-# Show what will change
-log "${YELLOW}[INFO]${NC} Calculating changes..."
+log "  ${GREEN}ovsbr0:${NC}"
+log "    - IP: 80.209.240.244/24"
+log "    - Gateway: 80.209.240.129"
+log "    - DNS: 8.8.8.8, 8.8.4.4"
+log "    - Port: $PRIMARY_IFACE"
 echo ""
-ovs-port-agent /etc/ovs-port-agent/config.toml show-diff "$CONFIG_TO_USE" || error_exit "Failed to calculate diff"
+log "  ${GREEN}ovsbr1:${NC}"
+log "    - IP: 80.209.242.196/25"
+log "    - Gateway: 80.209.242.129"
+log "    - DNS: 8.8.8.8, 8.8.4.4"
+log "    - Ports: none (isolated)"
 echo ""
 
 # Ask for confirmation
-read -p "Apply these changes? This will reconfigure your network. [y/N] " -n 1 -r
+read -p "Create bridges with gdbus then manage with plugins? [y/N] " -n 1 -r
 echo
 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    [[ -f "$TEMP_CONFIG" ]] && rm -f "$TEMP_CONFIG"
     log "${YELLOW}[INFO]${NC} Operation cancelled"
     exit 0
 fi
 
-# Apply the configuration
-log "${GREEN}[INFO]${NC} Applying network configuration..."
-if ovs-port-agent /etc/ovs-port-agent/config.toml apply-state "$CONFIG_TO_USE"; then
-    log "${GREEN}[SUCCESS]${NC} Network configuration applied successfully!"
-else
-    error_exit "Failed to apply network configuration"
-fi
+# Helper function to convert IP to uint32 for D-Bus (network byte order)
+ip_to_uint32() {
+    local ip=$1
+    local a b c d
+    IFS=. read -r a b c d <<< "$ip"
+    echo $((a + (b * 256) + (c * 256 * 256) + (d * 256 * 256 * 256)))
+}
 
-# Clean up temp config
-[[ -f "$TEMP_CONFIG" ]] && rm -f "$TEMP_CONFIG"
+DNS1=$(ip_to_uint32 "8.8.8.8")
+DNS2=$(ip_to_uint32 "8.8.4.4")
+
+log ""
+log "${BLUE}========================================${NC}"
+log "${BLUE} PHASE 1: Create bridges with gdbus${NC}"
+log "${BLUE}========================================${NC}"
+log ""
+
+# Create ovsbr0 bridge
+log "${YELLOW}[INFO]${NC} Creating ovsbr0 bridge via gdbus..."
+BRIDGE0_RESULT=$(gdbus call --system \
+  --dest org.freedesktop.NetworkManager \
+  --object-path /org/freedesktop/NetworkManager/Settings \
+  --method org.freedesktop.NetworkManager.Settings.AddConnection2 \
+  "{'connection': {'id': <'ovsbr0'>, 'type': <'ovs-bridge'>, 'interface-name': <'ovsbr0'>, 'autoconnect': <true>}, 'ovs-bridge': {'stp-enable': <false>, 'mcast-snooping-enable': <true>}, 'ipv4': {'method': <'manual'>, 'address-data': <[{'address': '80.209.240.244', 'prefix': <uint32 24>}]>, 'gateway': <'80.209.240.129'>, 'dns': <[uint32 $DNS1, uint32 $DNS2]>}, 'ipv6': {'method': <'disabled'>}}" \
+  1 \
+  {} 2>&1) || error_exit "Failed to create ovsbr0: $BRIDGE0_RESULT"
+
+log "${GREEN}[SUCCESS]${NC} ovsbr0 created"
+echo "$BRIDGE0_RESULT"
+echo ""
+
+# Create ovsbr0 port (connects bridge to port)
+log "${YELLOW}[INFO]${NC} Creating ovsbr0 port..."
+PORT0_RESULT=$(gdbus call --system \
+  --dest org.freedesktop.NetworkManager \
+  --object-path /org/freedesktop/NetworkManager/Settings \
+  --method org.freedesktop.NetworkManager.Settings.AddConnection2 \
+  "{'connection': {'id': <'ovsbr0-port'>, 'type': <'ovs-port'>, 'interface-name': <'ovsbr0-port'>, 'master': <'ovsbr0'>, 'slave-type': <'ovs-bridge'>, 'autoconnect': <true>}, 'ovs-port': {}}" \
+  1 \
+  {} 2>&1) || error_exit "Failed to create ovsbr0 port: $PORT0_RESULT"
+
+log "${GREEN}[SUCCESS]${NC} ovsbr0-port created"
+echo "$PORT0_RESULT"
+echo ""
+
+# Create ovsbr0 interface (attaches physical interface)
+log "${YELLOW}[INFO]${NC} Creating ovsbr0 interface for $PRIMARY_IFACE..."
+IFACE0_RESULT=$(gdbus call --system \
+  --dest org.freedesktop.NetworkManager \
+  --object-path /org/freedesktop/NetworkManager/Settings \
+  --method org.freedesktop.NetworkManager.Settings.AddConnection2 \
+  "{'connection': {'id': <'ovsbr0-$PRIMARY_IFACE'>, 'type': <'ovs-interface'>, 'interface-name': <'$PRIMARY_IFACE'>, 'master': <'ovsbr0-port'>, 'slave-type': <'ovs-port'>, 'autoconnect': <true>}, 'ovs-interface': {'type': <'internal'>}}" \
+  1 \
+  {} 2>&1) || error_exit "Failed to create ovsbr0 interface: $IFACE0_RESULT"
+
+log "${GREEN}[SUCCESS]${NC} ovsbr0 interface created"
+echo "$IFACE0_RESULT"
+echo ""
+
+# Create ovsbr1 bridge (isolated, no ports)
+log "${YELLOW}[INFO]${NC} Creating ovsbr1 bridge via gdbus..."
+BRIDGE1_RESULT=$(gdbus call --system \
+  --dest org.freedesktop.NetworkManager \
+  --object-path /org/freedesktop/NetworkManager/Settings \
+  --method org.freedesktop.NetworkManager.Settings.AddConnection2 \
+  "{'connection': {'id': <'ovsbr1'>, 'type': <'ovs-bridge'>, 'interface-name': <'ovsbr1'>, 'autoconnect': <true>}, 'ovs-bridge': {'stp-enable': <false>, 'mcast-snooping-enable': <true>}, 'ipv4': {'method': <'manual'>, 'address-data': <[{'address': '80.209.242.196', 'prefix': <uint32 25>}]>, 'gateway': <'80.209.242.129'>, 'dns': <[uint32 $DNS1, uint32 $DNS2]>}, 'ipv6': {'method': <'disabled'>}}" \
+  1 \
+  {} 2>&1) || error_exit "Failed to create ovsbr1: $BRIDGE1_RESULT"
+
+log "${GREEN}[SUCCESS]${NC} ovsbr1 created"
+echo "$BRIDGE1_RESULT"
+echo ""
+
+log "${GREEN}[SUCCESS]${NC} All bridges created via gdbus!"
+echo ""
+
+# Wait a moment for NetworkManager to settle
+sleep 2
+
+log ""
+log "${BLUE}========================================${NC}"
+log "${BLUE} PHASE 2: Plugin state management${NC}"
+log "${BLUE}========================================${NC}"
+log ""
+
+# Check if nm-monitor/plugin is installed
+if command -v ovs-port-agent &> /dev/null; then
+    log "${GREEN}[INFO]${NC} nm-monitor plugin detected"
+    
+    # Query current state via plugin
+    log "${YELLOW}[INFO]${NC} Querying current network state via plugin..."
+    ovs-port-agent /etc/ovs-port-agent/config.toml query-state || true
+    echo ""
+    
+    # Show diff against desired config
+    if [[ -f "$CONFIG_FILE" ]]; then
+        TEMP_CONFIG="/tmp/ovs-bridges-config-$$.yaml"
+        sed "s/ens1/${PRIMARY_IFACE}/g" "$CONFIG_FILE" > "$TEMP_CONFIG"
+        
+        log "${YELLOW}[INFO]${NC} Checking state diff..."
+        ovs-port-agent /etc/ovs-port-agent/config.toml show-diff "$TEMP_CONFIG" || true
+        rm -f "$TEMP_CONFIG"
+        echo ""
+    fi
+else
+    log "${YELLOW}[INFO]${NC} nm-monitor plugin not installed (optional)"
+fi
 
 # Show final state
 echo ""
@@ -143,25 +205,25 @@ log "${YELLOW}=== Routing Table ===${NC}"
 ip route show
 echo ""
 
-log "${YELLOW}=== OVS Configuration ===${NC}"
-ovs-vsctl show
-echo ""
-
-log "${YELLOW}=== Plugin State ===${NC}"
-ovs-port-agent /etc/ovs-port-agent/config.toml query-state net | head -50
-echo ""
+if command -v ovs-vsctl &> /dev/null; then
+    log "${YELLOW}=== OVS Configuration ===${NC}"
+    ovs-vsctl show
+    echo ""
+fi
 
 log "${GREEN}========================================${NC}"
 log "${GREEN} OVS Bridge Setup Complete!${NC}"
 log "${GREEN}========================================${NC}"
 log ""
-log "Bridges created:"
+log "Bridges created via gdbus:"
 log "  • ovsbr0: 80.209.240.244/24 (gateway: 80.209.240.129)"
-log "  • ovsbr1: 80.209.242.25/24 (gateway: 80.209.242.1)"
+log "  • ovsbr1: 80.209.242.196/25 (gateway: 80.209.242.129)"
 log ""
 log "Your uplink ($PRIMARY_IFACE) is now attached to ovsbr0"
 log ""
-log "To modify configuration later:"
-log "  1. Edit: $CONFIG_FILE"
-log "  2. Apply: sudo ovs-port-agent apply-state <config.yaml>"
+if command -v ovs-port-agent &> /dev/null; then
+    log "State is now managed by plugin system"
+    log "  - Query: sudo ovs-port-agent /etc/ovs-port-agent/config.toml query-state"
+    log "  - Diff: sudo ovs-port-agent /etc/ovs-port-agent/config.toml show-diff <config>"
+fi
 log ""
