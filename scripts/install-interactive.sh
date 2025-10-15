@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Interactive atomic install script with user prompts
-# Zero connectivity loss with user-specified configuration
+# Interactive atomic install script - only prompts for uplink, introspects everything else
+# Zero connectivity loss with automatic configuration detection
 
 set -euo pipefail
 
@@ -31,7 +31,7 @@ log "${YELLOW}Current default route:${NC}"
 ip route show default
 echo
 
-# Prompt for uplink interface
+# Prompt for uplink interface ONLY
 read -p "Enter uplink interface name (e.g., eth0, wlo1): " UPLINK
 [[ -n "$UPLINK" ]] || error_exit "Uplink interface required"
 
@@ -40,36 +40,44 @@ if ! ip link show "$UPLINK" >/dev/null 2>&1; then
     error_exit "Interface $UPLINK does not exist"
 fi
 
-# Prompt for bridge name
-read -p "Enter bridge name [ovsbr0]: " BRIDGE
-BRIDGE=${BRIDGE:-ovsbr0}
+# INTROSPECT everything else
+log "${BLUE}Introspecting network configuration...${NC}"
 
-# Get current IP from uplink as default
-CURRENT_IP=$(ip -o -4 addr show "$UPLINK" | awk '{print $4}' | cut -d/ -f1 | head -1)
-CURRENT_PREFIX=$(ip -o -4 addr show "$UPLINK" | awk '{print $4}' | cut -d/ -f2 | head -1)
-CURRENT_GW=$(ip route show default | awk '{print $3}' | head -1)
+# Bridge name - always ovsbr0
+BRIDGE="ovsbr0"
 
-# Prompt for IP configuration
-read -p "Enter IP address [$CURRENT_IP]: " IP_ADDR
-IP_ADDR=${IP_ADDR:-$CURRENT_IP}
+# Get current IP configuration from uplink
+IP_ADDR=$(ip -o -4 addr show "$UPLINK" | awk '{print $4}' | cut -d/ -f1 | head -1)
+PREFIX=$(ip -o -4 addr show "$UPLINK" | awk '{print $4}' | cut -d/ -f2 | head -1)
+GATEWAY=$(ip route show default | awk '{print $3}' | head -1)
 
-read -p "Enter subnet prefix [$CURRENT_PREFIX]: " PREFIX
-PREFIX=${PREFIX:-$CURRENT_PREFIX}
+# Validate introspected values, prompt only if missing
+if [[ -z "$IP_ADDR" ]]; then
+    read -p "Could not detect IP address. Enter IP: " IP_ADDR
+    [[ -n "$IP_ADDR" ]] || error_exit "IP address required"
+fi
 
-read -p "Enter gateway [$CURRENT_GW]: " GATEWAY
-GATEWAY=${GATEWAY:-$CURRENT_GW}
+if [[ -z "$PREFIX" ]]; then
+    read -p "Could not detect subnet prefix. Enter prefix (e.g., 24): " PREFIX
+    [[ -n "$PREFIX" ]] || error_exit "Subnet prefix required"
+fi
 
-read -p "Enter DNS servers [8.8.8.8,8.8.4.4]: " DNS
-DNS=${DNS:-8.8.8.8,8.8.4.4}
+if [[ -z "$GATEWAY" ]]; then
+    read -p "Could not detect gateway. Enter gateway IP: " GATEWAY
+    [[ -n "$GATEWAY" ]] || error_exit "Gateway required"
+fi
 
-# Show configuration summary
+# DNS - always use reliable defaults
+DNS="8.8.8.8,8.8.4.4"
+
+# Show introspected configuration
 echo
-log "${BLUE}Configuration Summary:${NC}"
-log "  Uplink Interface: $UPLINK"
-log "  Bridge Name: $BRIDGE"
-log "  IP Address: $IP_ADDR/$PREFIX"
-log "  Gateway: $GATEWAY"
-log "  DNS: $DNS"
+log "${BLUE}Detected Configuration:${NC}"
+log "  Uplink Interface: $UPLINK (user specified)"
+log "  Bridge Name: $BRIDGE (default)"
+log "  IP Address: $IP_ADDR/$PREFIX (introspected)"
+log "  Gateway: $GATEWAY (introspected)"
+log "  DNS: $DNS (default)"
 echo
 
 read -p "Proceed with this configuration? [y/N]: " -n 1 -r
@@ -134,9 +142,6 @@ install -m 0755 target/release/ovs-port-agent /usr/local/bin/
 install -d /etc/ovs-port-agent
 [[ ! -f /etc/ovs-port-agent/config.toml ]] && install -m 0644 config/config.toml.example /etc/ovs-port-agent/config.toml
 
-# Update config with user's bridge name
-sed -i "s/bridge_name = \".*\"/bridge_name = \"$BRIDGE\"/" /etc/ovs-port-agent/config.toml
-
 install -m 0644 dbus/dev.ovs.PortAgent1.conf /etc/dbus-1/system.d/
 install -m 0644 systemd/ovs-port-agent.service /etc/systemd/system/
 
@@ -153,7 +158,6 @@ log "${GREEN}✅ Zero connectivity loss${NC}"
 log "${GREEN}✅ OVS bridge: $BRIDGE with IP $IP_ADDR/$PREFIX${NC}"
 log "${GREEN}✅ Uplink: $UPLINK enslaved to bridge${NC}"
 log "${GREEN}✅ Gateway: $GATEWAY${NC}"
-log "${GREEN}✅ DNS: $DNS${NC}"
 echo
 log "${BLUE}Bridge status:${NC}"
 nmcli connection show --active | grep -E "$BRIDGE|ovs"
