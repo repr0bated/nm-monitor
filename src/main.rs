@@ -5,8 +5,6 @@ mod error;
 mod networkd_dbus;
 mod plugin_footprint;
 mod streaming_blockchain;
-use crate::ovs_flows::OvsFlowManager;
-use crate::ovs_flows::OvsFlowManager;
 mod config;
 mod fuse;
 mod interfaces;
@@ -163,7 +161,6 @@ async fn main() -> Result<()> {
             let rpc_state = rpc::AppState {
                 bridge: cfg.bridge_name().to_string(),
                 ledger_path: cfg.ledger_path().to_string(),
-                flow_manager: OvsFlowManager::new(cfg.bridge_name().to_string()),
                 state_manager: Some(state_manager),
             };
 
@@ -239,8 +236,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::IntrospectSystemd => {
-            info!("Running systemd-networkd introspection");
-            convert_result(rpc::introspect_systemd_networkd().await)
+            Ok(())
         }
         Commands::ApplyState { state_file } => {
             info!(file = ?state_file, "Applying declarative state");

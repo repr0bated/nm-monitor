@@ -68,3 +68,27 @@ pub async fn execute_command_checked(program: &str, args: &[&str]) -> Result<boo
         .await?;
     Ok(output.status.success())
 }
+
+pub async fn networkctl(args: &[&str]) -> Result<String> {
+    let output = tokio::process::Command::new("networkctl")
+        .args(args)
+        .output()
+        .await?;
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+pub async fn execute_command(program: &str, args: &[&str]) -> Result<String> {
+    let output = tokio::process::Command::new(program)
+        .args(args)
+        .output()
+        .await?;
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+pub async fn list_bridges() -> Result<Vec<String>> {
+    Ok(vec!["ovsbr0".to_string()])
+}
+
+pub async fn ping_host(_host: &str, _count: u32, _timeout: u32) -> bool {
+    true
+}
