@@ -108,7 +108,7 @@ impl OvsAtomicSetup {
              # Created: {}\n\
              [NetDev]\n\
              Name=ovsbr0\n\
-             Kind=openvswitch\n",
+             Kind=ovs-bridge\n",
             chrono::Utc::now()
         );
         tokio::fs::write(
@@ -166,7 +166,7 @@ impl OvsAtomicSetup {
              # Created: {}\n\
              [NetDev]\n\
              Name=ovsbr1\n\
-             Kind=openvswitch\n",
+             Kind=ovs-bridge\n",
             chrono::Utc::now()
         );
         tokio::fs::write(
