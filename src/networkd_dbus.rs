@@ -40,7 +40,7 @@ impl NetworkdClient {
         ).await?;
 
         let links: Vec<(u32, String, zbus::zvariant::OwnedObjectPath)> = 
-            proxy.call_method("ListLinks", &()).await?;
+            proxy.call_method("ListLinks", &()).await?.body()?;
 
         let mut link_infos = Vec::new();
         for (index, name, path) in links {
@@ -94,10 +94,11 @@ impl NetworkdClient {
 
     /// Get IP addresses via zbus
     async fn get_link_addresses(&self, link_index: u32) -> Result<Vec<String>> {
+        let path = format!("/org/freedesktop/network1/link/{}", link_index);
         let proxy = Proxy::new(
             &self.conn,
             "org.freedesktop.network1",
-            &format!("/org/freedesktop/network1/link/{}", link_index),
+            path.as_str(),
             "org.freedesktop.network1.Link",
         ).await?;
 
