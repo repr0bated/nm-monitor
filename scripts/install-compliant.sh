@@ -33,6 +33,19 @@ cargo build --release || error_exit "Failed to build"
 
 # Install and start OVSDB D-Bus wrapper
 log "${BLUE}Installing OVSDB D-Bus wrapper${NC}"
+systemctl stop ovsdb-dbus-wrapper 2>/dev/null || true
+install -m 0755 target/release/ovsdb-dbus-wrapper /usr/local/bin/
+install -m 0644 dbus/org.openvswitch.ovsdb.conf /etc/dbus-1/system.d/
+install -m 0644 systemd/ovsdb-dbus-wrapper.service /etc/systemd/system/
+
+systemctl daemon-reload
+systemctl enable --now ovsdb-dbus-wrapper
+sleep 2  # Wait for D-Bus service to register
+
+log "${GREEN}✓ OVSDB D-Bus wrapper installed and running${NC}"
+
+# Install and start OVSDB D-Bus wrapper
+log "${BLUE}Installing OVSDB D-Bus wrapper${NC}"
 install -m 0755 target/release/ovsdb-dbus-wrapper /usr/local/bin/
 install -m 0644 dbus/org.openvswitch.ovsdb.conf /etc/dbus-1/system.d/
 install -m 0644 systemd/ovsdb-dbus-wrapper.service /etc/systemd/system/
