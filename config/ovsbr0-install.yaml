@@ -1,4 +1,4 @@
-# Minimal OVS bridge config for testing
+# OVS bridge with uplink port
 version: 1
 
 plugins:
@@ -6,6 +6,8 @@ plugins:
     interfaces:
       - name: ovsbr0
         type: ovs-bridge
+        ports:
+          - ens1
         ipv4:
           enabled: true
           dhcp: true
