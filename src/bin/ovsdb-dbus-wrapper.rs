@@ -5,7 +5,7 @@ use anyhow::Result;
 use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
-use zbus::{interface, Connection, ConnectionBuilder};
+use zbus::{interface, ConnectionBuilder};
 
 const OVSDB_SOCKET: &str = "/var/run/openvswitch/db.sock";
 
