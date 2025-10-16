@@ -187,6 +187,13 @@ impl StateManager {
             match plugin.apply_state(&diff).await {
                 Ok(result) => {
                     log::info!("Applied state for plugin: {}", diff.plugin);
+                    log::info!("Result success: {}, changes: {:?}, errors: {:?}", 
+                        result.success, result.changes_applied, result.errors);
+
+                    // Check if result indicates failure
+                    if !result.success {
+                        log::error!("Plugin {} returned success=false, but not triggering rollback (treating as warning)", diff.plugin);
+                    }
 
                     // Log to blockchain ledger
                     if let Ok(mut ledger) = self.ledger.try_lock() {
@@ -205,10 +212,12 @@ impl StateManager {
                 }
                 Err(e) => {
                     log::error!(
-                        "State apply failed for {}: {}, rolling back",
+                        "State apply FAILED for {}: {}, rolling back",
                         diff.plugin,
                         e
                     );
+                    log::error!("Error details: {:?}", e);
+                    log::error!("Triggering rollback for all plugins");
                     self.rollback_all(&checkpoints).await?;
                     return Err(e);
                 }
