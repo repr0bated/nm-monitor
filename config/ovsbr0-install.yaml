@@ -14,6 +14,7 @@ plugins:
         ipv4:
           enabled: true
           dhcp: true
+          address: []
         properties:
           role: "primary"
           description: "Main bridge with uplink"
