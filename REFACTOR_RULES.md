@@ -4,6 +4,15 @@
 
 The entire purpose of this refactor is to **REMOVE** the problematic NetworkManager dependency and create a pure OVS + systemd-networkd solution.
 
+## Rule 0: Use rust-pro Agent for All Rust Code
+- **ALWAYS** load and use the rust-pro agent from `/git/agents/rust-pro.md` when:
+  - Creating new Rust files
+  - Modifying existing Rust code
+  - Refactoring Rust modules
+  - Writing Rust implementations
+- Follow idiomatic Rust patterns, proper error handling, and async/await best practices
+- Leverage ownership, borrowing, and zero-cost abstractions
+
 ## Rule 1: NO NetworkManager
 - **NEVER** use NetworkManager D-Bus calls
 - **NEVER** use `nmcli` commands
