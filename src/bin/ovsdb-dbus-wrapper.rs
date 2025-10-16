@@ -45,7 +45,7 @@ impl OvsdbWrapper {
     async fn create_bridge(&self, bridge_name: String) -> zbus::fdo::Result<()> {
         eprintln!("[OVSDB] Creating bridge: {}", bridge_name);
         
-        self.exec_via_snapshot(&["add-br", &bridge_name])
+        self.exec_via_snapshot(&["--may-exist", "add-br", &bridge_name])
             .await
             .map(|_| ())
             .map_err(|e| {
@@ -58,7 +58,7 @@ impl OvsdbWrapper {
     async fn add_port(&self, bridge_name: String, port_name: String) -> zbus::fdo::Result<()> {
         eprintln!("[OVSDB] Adding port {} to bridge {}", port_name, bridge_name);
         
-        self.exec_via_snapshot(&["add-port", &bridge_name, &port_name])
+        self.exec_via_snapshot(&["--may-exist", "add-port", &bridge_name, &port_name])
             .await
             .map(|_| ())
             .map_err(|e| {
