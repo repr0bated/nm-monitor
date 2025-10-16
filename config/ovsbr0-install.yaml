@@ -1,33 +1,11 @@
-# Declarative state for ovsbr0 bridge installation
-# Uses state manager with modify support
-
+# Minimal OVS bridge config for testing
 version: 1
 
 plugins:
   net:
     interfaces:
-      # Primary OVS bridge with DHCP (ISP transparent VLAN)
       - name: ovsbr0
         type: ovs-bridge
-        ports:
-          - ens1  # Physical uplink
         ipv4:
           enabled: true
           dhcp: true
-          address: []
-        properties:
-          role: "primary"
-          description: "Main bridge with uplink"
-          stp_enabled: false
-      
-      # Physical uplink (enslaved to bridge, no IP)
-      - name: ens1
-        type: ethernet
-        controller: ovsbr0
-        ipv4:
-          enabled: false
-          address: []
-
-  netcfg:
-    dns:
-      hostname: castlebox.ghostbridge.tech
