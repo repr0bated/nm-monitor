@@ -10,6 +10,7 @@ use log;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use tokio::process::Command as AsyncCommand;
 
 /// Network configuration schema
@@ -162,11 +163,10 @@ impl NetStatePlugin {
             }
         }
 
-        // Validate OVS bridge configuration
-        if config.if_type == InterfaceType::OvsBridge {
-            // Validate IP configuration
-            if let Some(ipv4) = &config.ipv4 {
-                if ipv4.enabled && ipv4.dhcp == Some(false) {
+        // Validate IP configuration for all interface types
+        if let Some(ipv4) = &config.ipv4 {
+            println!("DEBUG: IPv4 config found, enabled={}, dhcp={:?}", ipv4.enabled, ipv4.dhcp);
+            if ipv4.enabled && ipv4.dhcp == Some(false) {
                     // Static IP requires address
                     if ipv4.address.is_none() || ipv4.address.as_ref().unwrap().is_empty() {
                         return Err(anyhow!(
@@ -175,15 +175,33 @@ impl NetStatePlugin {
                         ));
                     }
 
-                    // Validate IP addresses
+                    // Validate IP addresses with proper validation
                     if let Some(addresses) = &ipv4.address {
                         for addr in addresses {
-                            // Basic IP validation
-                            if !addr.ip.contains('.') || addr.prefix > 32 {
+                            // Proper IPv4 validation using std::net
+                            if addr.ip.parse::<Ipv4Addr>().is_err() {
                                 return Err(anyhow!(
-                                    "Invalid IPv4 address/prefix: {}/{}",
-                                    addr.ip,
+                                    "Invalid IPv4 address format: {}",
+                                    addr.ip
+                                ));
+                            }
+                            if addr.prefix > 32 {
+                                return Err(anyhow!(
+                                    "Invalid IPv4 prefix length: {} (must be 0-32)",
                                     addr.prefix
+                                ));
+                            }
+                        }
+                    }
+
+                    // Validate DNS servers if specified
+                    if let Some(dns) = &ipv4.dns {
+                        for dns_server in dns {
+                            if dns_server.parse::<Ipv4Addr>().is_err() &&
+                               dns_server.parse::<Ipv6Addr>().is_err() {
+                                return Err(anyhow!(
+                                    "Invalid DNS server address: {} (must be valid IPv4 or IPv6)",
+                                    dns_server
                                 ));
                             }
                         }
@@ -194,13 +212,6 @@ impl NetStatePlugin {
 
         // Validate enslaved interfaces
         if let Some(controller) = &config.controller {
-            if config.if_type == InterfaceType::OvsBridge {
-                return Err(anyhow!(
-                    "OVS bridge '{}' cannot be enslaved to another bridge",
-                    config.name
-                ));
-            }
-
             // Enslaved interfaces should not have IP configuration
             if let Some(ipv4) = &config.ipv4 {
                 if ipv4.enabled {
@@ -360,8 +371,12 @@ impl NetStatePlugin {
     }
 
     /// Generate .network file content
-    fn generate_network_file(&self, config: &InterfaceConfig) -> String {
-        let mut content = format!("[Match]\nName={}\n\n[Network]\n", config.name);
+    fn generate_network_file(&self, config: &InterfaceConfig) -> Result<String> {
+        // Use String::with_capacity for better performance with known approximate size
+        let mut content = String::with_capacity(512); // Pre-allocate reasonable capacity
+        content.push_str("[Match]\nName=");
+        content.push_str(&config.name);
+        content.push_str("\n\n[Network]\n");
 
         if let Some(ipv4) = &config.ipv4 {
             if ipv4.enabled {
@@ -369,14 +384,24 @@ impl NetStatePlugin {
                     content.push_str("DHCP=yes\n");
                 } else if let Some(addresses) = &ipv4.address {
                     for addr in addresses {
-                        content.push_str(&format!("Address={}/{}\n", addr.ip, addr.prefix));
+                        content.push_str("Address=");
+                        content.push_str(&addr.ip);
+                        content.push('/');
+                        // Use push instead of format! for single character
+                        let prefix_str = addr.prefix.to_string();
+                        content.push_str(&prefix_str);
+                        content.push('\n');
                     }
                     if let Some(gateway) = &ipv4.gateway {
-                        content.push_str(&format!("Gateway={}\n", gateway));
+                        content.push_str("Gateway=");
+                        content.push_str(gateway);
+                        content.push('\n');
                     }
                     if let Some(dns) = &ipv4.dns {
                         for dns_server in dns {
-                            content.push_str(&format!("DNS={}\n", dns_server));
+                            content.push_str("DNS=");
+                            content.push_str(dns_server);
+                            content.push('\n');
                         }
                     }
                 }
@@ -384,10 +409,12 @@ impl NetStatePlugin {
         }
 
         if let Some(controller) = &config.controller {
-            content.push_str(&format!("Bridge={}\n", controller));
+            content.push_str("Bridge=");
+            content.push_str(controller);
+            content.push('\n');
         }
 
-        content
+        Ok(content)
     }
 
     /// Generate .netdev file content for OVS bridges
@@ -626,7 +653,7 @@ impl NetStatePlugin {
 
         // For non-OVS interfaces, use traditional config files
         let network_file_path = format!("{}/10-{}.network", self.config_dir, config.name);
-        let network_content = self.generate_network_file(config);
+        let network_content = self.generate_network_file(config)?;
         tokio::fs::write(&network_file_path, network_content)
             .await
             .context("Failed to write .network file")?;
@@ -721,6 +748,143 @@ impl NetStatePlugin {
             .context("Failed to set bridge MAC address")?;
         Ok(())
     }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn test_validate_invalid_ipv4_address() {
+        let plugin = NetStatePlugin::new();
+        let config = InterfaceConfig {
+            name: "test".to_string(),
+            if_type: InterfaceType::Ethernet,
+            ports: None,
+            ipv4: Some(Ipv4Config {
+                enabled: true,
+                dhcp: Some(false),
+                address: Some(vec![AddressConfig {
+                    ip: "invalid.ip.address".to_string(),
+                    prefix: 24,
+                }]),
+                gateway: None,
+                dns: None,
+            }),
+            ipv6: None,
+            controller: None,
+            properties: None,
+            property_schema: None,
+        };
+
+        let result = plugin.validate_interface_config(&config);
+        println!("Validation result: {:?}", result);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid IPv4 address format"));
+    }
+
+    #[test]
+    fn test_validate_invalid_ipv4_prefix() {
+        let plugin = NetStatePlugin::new();
+        let config = InterfaceConfig {
+            name: "test".to_string(),
+            if_type: InterfaceType::Ethernet,
+            ports: None,
+            ipv4: Some(Ipv4Config {
+                enabled: true,
+                dhcp: Some(false),
+                address: Some(vec![AddressConfig {
+                    ip: "192.168.1.1".to_string(),
+                    prefix: 33, // Invalid prefix > 32
+                }]),
+                gateway: None,
+                dns: None,
+            }),
+            ipv6: None,
+            controller: None,
+            properties: None,
+            property_schema: None,
+        };
+
+        let result = plugin.validate_interface_config(&config);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid IPv4 prefix length"));
+    }
+
+    #[test]
+    fn test_validate_invalid_dns_server() {
+        let plugin = NetStatePlugin::new();
+        let config = InterfaceConfig {
+            name: "test".to_string(),
+            if_type: InterfaceType::Ethernet,
+            ports: None,
+            ipv4: Some(Ipv4Config {
+                enabled: true,
+                dhcp: Some(false),
+                address: Some(vec![AddressConfig {
+                    ip: "192.168.1.1".to_string(),
+                    prefix: 24,
+                }]),
+                gateway: None,
+                dns: Some(vec!["invalid.dns.server".to_string()]),
+            }),
+            ipv6: None,
+            controller: None,
+            properties: None,
+            property_schema: None,
+        };
+
+        let result = plugin.validate_interface_config(&config);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid DNS server address"));
+    }
+
+    #[test]
+    fn test_validate_valid_ipv6_dns() {
+        let plugin = NetStatePlugin::new();
+        let config = InterfaceConfig {
+            name: "test".to_string(),
+            if_type: InterfaceType::Ethernet,
+            ports: None,
+            ipv4: Some(Ipv4Config {
+                enabled: true,
+                dhcp: Some(false),
+                address: Some(vec![AddressConfig {
+                    ip: "192.168.1.1".to_string(),
+                    prefix: 24,
+                }]),
+                gateway: None,
+                dns: Some(vec!["::1".to_string()]), // Valid IPv6 localhost
+            }),
+            ipv6: None,
+            controller: None,
+            properties: None,
+            property_schema: None,
+        };
+
+        let result = plugin.validate_interface_config(&config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_ovs_bridge_enslavement() {
+        let plugin = NetStatePlugin::new();
+        let config = InterfaceConfig {
+            name: "test".to_string(),
+            if_type: InterfaceType::OvsBridge,
+            ports: Some(vec!["ovsbr0".to_string()]), // OVS bridge cannot be enslaved to another bridge
+            ipv4: None,
+            ipv6: None,
+            controller: Some("ovsbr0".to_string()),
+            properties: None,
+            property_schema: None,
+        };
+
+        let result = plugin.validate_interface_config(&config);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot be enslaved"));
+    }
 }
 
 #[async_trait]
@@ -751,17 +915,17 @@ impl StatePlugin for NetStatePlugin {
 
         let mut actions = Vec::new();
 
-        // Build maps for quick lookup
-        let current_map: HashMap<String, &InterfaceConfig> = current_config
+        // Build maps for quick lookup - avoid cloning strings unnecessarily
+        let current_map: HashMap<&String, &InterfaceConfig> = current_config
             .interfaces
             .iter()
-            .map(|i| (i.name.clone(), i))
+            .map(|i| (&i.name, i))
             .collect();
 
-        let desired_map: HashMap<String, &InterfaceConfig> = desired_config
+        let desired_map: HashMap<&String, &InterfaceConfig> = desired_config
             .interfaces
             .iter()
-            .map(|i| (i.name.clone(), i))
+            .map(|i| (&i.name, i))
             .collect();
 
         // Find interfaces to create or modify
@@ -770,13 +934,13 @@ impl StatePlugin for NetStatePlugin {
                 // Check if modification needed
                 if serde_json::to_value(current_iface)? != serde_json::to_value(desired_iface)? {
                     actions.push(StateAction::Modify {
-                        resource: name.clone(),
+                        resource: (*name).clone(),
                         changes: serde_json::to_value(desired_iface)?,
                     });
                 }
             } else {
                 actions.push(StateAction::Create {
-                    resource: name.clone(),
+                    resource: (*name).clone(),
                     config: serde_json::to_value(desired_iface)?,
                 });
             }
@@ -786,7 +950,7 @@ impl StatePlugin for NetStatePlugin {
         for name in current_map.keys() {
             if !desired_map.contains_key(name) {
                 actions.push(StateAction::Delete {
-                    resource: name.clone(),
+                    resource: (*name).clone(),
                 });
             }
         }

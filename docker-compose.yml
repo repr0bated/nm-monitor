@@ -1,0 +1,82 @@
+version: '3.8'
+
+services:
+  ovs-port-agent:
+    build: .
+    container_name: ovs-port-agent
+    restart: unless-stopped
+    network_mode: host  # Required for network management
+    volumes:
+      - /etc/systemd/system:/etc/systemd/system:ro
+      - /run/systemd:/run/systemd
+      - /var/run/dbus:/var/run/dbus
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+      - ./config:/etc/ovs-port-agent:ro
+    environment:
+      - RUST_LOG=info
+    cap_add:
+      - CAP_NET_ADMIN
+      - CAP_SYS_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    depends_on:
+      - ovsdb
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  ovsdb:
+    image: debian:bookworm-slim
+    container_name: ovs-ovsdb
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - /var/lib/openvswitch:/var/lib/openvswitch
+      - /etc/openvswitch:/etc/openvswitch
+    command: >
+      bash -c "
+        # Initialize OVS database if it doesn't exist
+        if [ ! -f /var/lib/openvswitch/conf.db ]; then
+          ovsdb-tool create /var/lib/openvswitch/conf.db /usr/share/openvswitch/vswitch.ovsschema
+        fi
+
+        # Start OVSDB server
+        ovsdb-server /var/lib/openvswitch/conf.db \
+          --remote=punix:/var/run/openvswitch/db.sock \
+          --remote=ptcp:6640 \
+          --pidfile=/var/run/openvswitch/ovsdb-server.pid \
+          --detach
+
+        # Keep container running
+        tail -f /dev/null
+      "
+    cap_add:
+      - CAP_NET_ADMIN
+      - CAP_SYS_ADMIN
+
+  ovs-vswitchd:
+    image: debian:bookworm-slim
+    container_name: ovs-vswitchd
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - /var/lib/openvswitch:/var/lib/openvswitch
+      - /etc/openvswitch:/etc/openvswitch
+      - /var/run/openvswitch:/var/run/openvswitch
+    command: >
+      bash -c "
+        # Start OVS vswitchd
+        ovs-vswitchd unix:/var/run/openvswitch/db.sock \
+          --pidfile=/var/run/openvswitch/ovs-vswitchd.pid \
+          --detach
+
+        # Keep container running
+        tail -f /dev/null
+      "
+    cap_add:
+      - CAP_NET_ADMIN
+      - CAP_SYS_ADMIN
+    depends_on:
+      - ovsdb
