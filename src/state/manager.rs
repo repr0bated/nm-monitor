@@ -61,9 +61,11 @@ impl StateManager {
         if path.extension().and_then(|s| s.to_str()) == Some("yaml")
             || path.extension().and_then(|s| s.to_str()) == Some("yml")
         {
-            Ok(serde_yaml::from_str(&content)?)
+            serde_yaml::from_str(&content)
+                .map_err(|e| anyhow!("Failed to parse YAML: {}. Content:\n{}", e, content))
         } else {
-            Ok(serde_json::from_str(&content)?)
+            serde_json::from_str(&content)
+                .map_err(|e| anyhow!("Failed to parse JSON: {}", e))
         }
     }
 
