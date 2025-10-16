@@ -661,6 +661,39 @@ impl NetStatePlugin {
 
         Ok(())
     }
+    
+    /// Query OVS bridges directly
+    async fn query_ovs_bridges(&self) -> Result<Vec<InterfaceConfig>> {
+        let output = AsyncCommand::new("ovs-vsctl")
+            .arg("list-br")
+            .output()
+            .await?;
+            
+        if !output.status.success() {
+            return Ok(Vec::new());
+        }
+        
+        let bridges_str = String::from_utf8_lossy(&output.stdout);
+        let mut bridges = Vec::new();
+        
+        for bridge_name in bridges_str.lines() {
+            let bridge_name = bridge_name.trim();
+            if !bridge_name.is_empty() {
+                bridges.push(InterfaceConfig {
+                    name: bridge_name.to_string(),
+                    if_type: InterfaceType::OvsBridge,
+                    ports: None,
+                    ipv4: None,
+                    ipv6: None,
+                    controller: None,
+                    properties: None,
+                    property_schema: None,
+                });
+            }
+        }
+        
+        Ok(bridges)
+    }
 }
 
 #[async_trait]
