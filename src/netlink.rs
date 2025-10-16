@@ -5,7 +5,6 @@ use crate::interfaces::update_interfaces_block;
 use crate::ledger::Ledger;
 use crate::link;
 use crate::naming::render_template;
-use crate::nm_ports;
 use anyhow::{Context, Result};
 use log::{info, warn};
 use std::path::PathBuf;
@@ -114,9 +113,7 @@ pub async fn create_container_interface(config: InterfaceConfig) -> Result<()> {
         }
     }
 
-    // Create NetworkManager connections for the interface
-    nm_ports::ensure_proactive_port(&config.bridge, &target_name)
-        .with_context(|| format!("create NM connections for {target_name}"))?;
+    // No NetworkManager connections needed - using OVS directly via D-Bus
 
     // Log the interface creation
     let mut lg = Ledger::open(PathBuf::from(&config.ledger_path))?;
@@ -171,13 +168,7 @@ pub async fn remove_container_interface(
 
     info!("Removing container interface: {}", interface_name);
 
-    // Remove NetworkManager connections using proactive naming
-    let port_name = format!("ovs-port-{}", interface_name);
-    let eth_name = format!("ovs-eth-{}", interface_name);
-
-    info!("Removing OVS port connection: {}", port_name);
-    nm_ports::remove_proactive_port(&port_name, &eth_name)
-        .with_context(|| format!("remove NM connections for {interface_name}"))?;
+    // No NetworkManager connections to remove - using OVS directly via D-Bus
 
     // Remove enhanced FUSE bind mount with full cleanup
     if let Err(e) = unbind_veth_interface_enhanced(interface_name) {

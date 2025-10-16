@@ -406,39 +406,24 @@ impl NetStatePlugin {
         }
     }
 
-    /// Create OVS bridge using ovs-vsctl
+    /// Create OVS bridge using OVSDB D-Bus
     async fn create_ovs_bridge(&self, name: &str) -> Result<()> {
-        // Check if bridge already exists
-        let check_output = AsyncCommand::new("ovs-vsctl")
-            .args(["br-exists", name])
-            .output()
-            .await
-            .context("Failed to check if bridge exists")?;
+        use crate::ovsdb_dbus::OvsdbClient;
+        
+        let client = OvsdbClient::new().await
+            .context("Failed to connect to OVSDB")?;
 
-        if check_output.status.success() {
-            // Bridge already exists, apply security settings anyway
-            log::info!("Bridge {} already exists, applying security settings", name);
-            self.apply_bridge_security(name).await?;
+        // Check if bridge already exists
+        if client.bridge_exists(name).await? {
+            log::info!("Bridge {} already exists", name);
             return Ok(());
         }
 
-        // Create the bridge
-        let output = AsyncCommand::new("ovs-vsctl")
-            .args(["add-br", name])
-            .output()
-            .await
-            .context("Failed to create OVS bridge")?;
+        // Create the bridge via D-Bus
+        client.create_bridge(name).await
+            .context("Failed to create OVS bridge via OVSDB D-Bus")?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow!("Failed to create OVS bridge {}: {}", name, stderr));
-        }
-
-        log::info!("Created OVS bridge: {}", name);
-
-        // Apply security settings
-        self.apply_bridge_security(name).await?;
-
+        log::info!("Created OVS bridge via OVSDB D-Bus: {}", name);
         Ok(())
     }
 
@@ -592,20 +577,17 @@ impl NetStatePlugin {
         Ok(())
     }
 
-    /// Delete OVS bridge
+    /// Delete OVS bridge using OVSDB D-Bus
     async fn delete_ovs_bridge(&self, name: &str) -> Result<()> {
-        let output = AsyncCommand::new("ovs-vsctl")
-            .args(["--if-exists", "del-br", name])
-            .output()
-            .await
-            .context("Failed to delete OVS bridge")?;
+        use crate::ovsdb_dbus::OvsdbClient;
+        
+        let client = OvsdbClient::new().await
+            .context("Failed to connect to OVSDB")?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow!("Failed to delete OVS bridge {}: {}", name, stderr));
-        }
+        client.delete_bridge(name).await
+            .context("Failed to delete bridge via OVSDB D-Bus")?;
 
-        log::info!("Deleted OVS bridge: {}", name);
+        log::info!("Deleted OVS bridge via OVSDB D-Bus: {}", name);
         Ok(())
     }
 

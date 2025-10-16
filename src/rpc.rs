@@ -53,10 +53,11 @@ impl PortAgent {
         "pong".into()
     }
 
-    fn list_ports(&self) -> zbus::fdo::Result<Vec<String>> {
+    async fn list_ports(&self) -> zbus::fdo::Result<Vec<String>> {
         debug!("D-Bus call: list_ports");
         self.port_service
             .list_ports()
+            .await
             .map_err(|e| zbus::fdo::Error::Failed(format!("Failed to list ports: {}", e)))
     }
 

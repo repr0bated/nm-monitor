@@ -14,15 +14,11 @@ mod link;
 mod logging;
 mod naming;
 mod netlink;
-mod nm_bridge;
-mod nm_config;
-mod nm_ports;
-mod nm_query;
+mod ovsdb_dbus;
 mod rpc;
 mod services;
 mod state;
 mod systemd_dbus;
-mod systemd_net;
 mod zbus_networkd;
 
 use crate::error::Result;
@@ -64,6 +60,23 @@ enum Commands {
     },
     /// List OVS ports on the configured bridge
     List,
+    /// Create OVS bridge via OVSDB D-Bus
+    CreateBridge {
+        /// Bridge name
+        bridge_name: String,
+    },
+    /// Delete OVS bridge via OVSDB D-Bus
+    DeleteBridge {
+        /// Bridge name
+        bridge_name: String,
+    },
+    /// Add port to OVS bridge via OVSDB D-Bus
+    AddPort {
+        /// Bridge name
+        bridge_name: String,
+        /// Port/interface name
+        port_name: String,
+    },
     /// Comprehensive systemd-networkd introspection and debugging
     IntrospectSystemd,
     /// Apply declarative state from YAML file
@@ -245,11 +258,53 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::List => {
-            info!("Listing container interfaces");
-            let names = convert_result(nm_query::list_connection_names())?;
-            for p in names.into_iter().filter(|n| n.starts_with("ovs-eth-")) {
-                println!("{}", p.trim_start_matches("ovs-eth-"));
+            info!("Listing OVS bridge ports");
+            // Use OVSDB D-Bus to list ports on the bridge
+            let client = ovsdb_dbus::OvsdbClient::new().await
+                .map_err(|e| error::Error::Internal(format!("Failed to connect to OVSDB: {}", e)))?;
+            
+            let ports = client.list_bridge_ports(&cfg.bridge_name()).await
+                .map_err(|e| error::Error::Internal(format!("Failed to list ports: {}", e)))?;
+            
+            for port in ports {
+                println!("{}", port);
             }
+            Ok(())
+        }
+        Commands::CreateBridge { bridge_name } => {
+            info!(bridge = %bridge_name, "Creating OVS bridge via OVSDB D-Bus");
+            let client = ovsdb_dbus::OvsdbClient::new().await
+                .map_err(|e| error::Error::Internal(format!("Failed to connect to OVSDB: {}", e)))?;
+            
+            client.create_bridge(&bridge_name).await
+                .map_err(|e| error::Error::Internal(format!("Failed to create bridge: {}", e)))?;
+            
+            info!(bridge = %bridge_name, "Bridge created successfully");
+            println!("Bridge {} created successfully", bridge_name);
+            Ok(())
+        }
+        Commands::DeleteBridge { bridge_name } => {
+            info!(bridge = %bridge_name, "Deleting OVS bridge via OVSDB D-Bus");
+            let client = ovsdb_dbus::OvsdbClient::new().await
+                .map_err(|e| error::Error::Internal(format!("Failed to connect to OVSDB: {}", e)))?;
+            
+            client.delete_bridge(&bridge_name).await
+                .map_err(|e| error::Error::Internal(format!("Failed to delete bridge: {}", e)))?;
+            
+            info!(bridge = %bridge_name, "Bridge deleted successfully");
+            println!("Bridge {} deleted successfully", bridge_name);
+            Ok(())
+        }
+        Commands::AddPort { bridge_name, port_name } => {
+            info!(bridge = %bridge_name, port = %port_name, "Adding port via OVSDB D-Bus");
+            let client = ovsdb_dbus::OvsdbClient::new().await
+                .map_err(|e| error::Error::Internal(format!("Failed to connect to OVSDB: {}", e)))?;
+            
+            client.add_port(&bridge_name, &port_name).await
+                .map_err(|e| error::Error::Internal(format!("Failed to add port: {}", e)))?;
+            
+            info!(bridge = %bridge_name, port = %port_name, "Port added successfully");
+            println!("Port {} added to bridge {} successfully", port_name, bridge_name);
             Ok(())
         }
         Commands::IntrospectSystemd => {

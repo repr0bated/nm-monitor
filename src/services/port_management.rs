@@ -1,7 +1,7 @@
 //! Port management service for container interface operations
 
 use crate::netlink::{self, InterfaceConfig};
-use crate::nm_query;
+use crate::ovsdb_dbus::OvsdbClient;
 use anyhow::{Context, Result};
 use tracing::{debug, info};
 
@@ -22,17 +22,14 @@ impl PortManagementService {
     }
 
     /// List all ports on the bridge
-    pub fn list_ports(&self) -> Result<Vec<String>> {
+    pub async fn list_ports(&self) -> Result<Vec<String>> {
         debug!("Listing ports on bridge '{}'", self.bridge);
 
-        nm_query::list_connection_names()
-            .map(|v| {
-                v.into_iter()
-                    .filter(|n| n.starts_with("ovs-eth-"))
-                    .map(|n| n.trim_start_matches("ovs-eth-").to_string())
-                    .collect()
-            })
-            .context("Failed to list connection names")
+        let client = OvsdbClient::new().await
+            .context("Failed to connect to OVSDB")?;
+        
+        client.list_bridge_ports(&self.bridge).await
+            .context("Failed to list bridge ports via OVSDB D-Bus")
     }
 
     /// Add a port to the bridge

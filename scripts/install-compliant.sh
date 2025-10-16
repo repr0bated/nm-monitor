@@ -1,52 +1,109 @@
 #!/usr/bin/env bash
-# Compliant systemd-networkd install script using pure zbus operations
+# Pure D-Bus install - introspect network and prompt for uplink
 
 set -euo pipefail
 
 readonly GREEN='\033[0;32m'
 readonly RED='\033[0;31m'
 readonly BLUE='\033[0;34m'
+readonly YELLOW='\033[1;33m'
 readonly NC='\033[0m'
 
 log() { echo -e "$1" >&2; }
 error_exit() { log "${RED}[ERROR]${NC} $1"; exit 1; }
 
+rollback() {
+    log "${RED}Rolling back${NC}"
+    ./target/release/ovs-port-agent delete-bridge ovsbr0 2>/dev/null || true
+    rm -f "$NETD_DIR"/{10-ovsbr0-bridge.network,20-$UPLINK.network,30-ovsbr0.network}
+    cp "/tmp/checkpoint-$CHECKPOINT_ID"/* "$NETD_DIR/" 2>/dev/null || true
+    dbus-send --system --dest=org.freedesktop.systemd1 \
+      /org/freedesktop/systemd1 \
+      org.freedesktop.systemd1.Manager.ReloadOrRestartUnit \
+      string:systemd-networkd.service string:replace 2>/dev/null || true
+}
+
 [[ $EUID -eq 0 ]] || error_exit "Must run as root"
 
-# Build the agent first
+# Ensure ovsdb-server is running
+systemctl is-active --quiet ovsdb-server || systemctl start ovsdb-server
+
 cd "$(dirname "$0")/.."
-cargo build --release || error_exit "Failed to build agent"
+cargo build --release || error_exit "Failed to build"
 
-# Create checkpoint
+# Backup
 CHECKPOINT_ID=$(date +%s)
-log "${BLUE}Creating checkpoint: $CHECKPOINT_ID${NC}"
-mkdir -p "/tmp/networkd-checkpoint-$CHECKPOINT_ID"
-cp -r /etc/systemd/network/* "/tmp/networkd-checkpoint-$CHECKPOINT_ID/" 2>/dev/null || true
+NETD_DIR="/etc/systemd/network"
+mkdir -p "/tmp/checkpoint-$CHECKPOINT_ID"
+cp -r "$NETD_DIR"/* "/tmp/checkpoint-$CHECKPOINT_ID/" 2>/dev/null || true
 
-# Detect uplink interface (simple method)
-UPLINK=$(ip route show default | awk '{print $5}' | head -1)
-[[ -n "$UPLINK" ]] || UPLINK="eth0"  # fallback
+log "${BLUE}=== Network Introspection ===${NC}"
 
-log "Detected uplink: $UPLINK"
+# Introspect available interfaces
+log "${YELLOW}Available network interfaces:${NC}"
+ip -o link show | awk -F': ' '{print $2}' | grep -v '^lo$' | nl
 
-# Get current IP configuration
+# Introspect current routes
+log "\n${YELLOW}Current routing table:${NC}"
+ip route show
+
+# Detect default route interface
+DEFAULT_IFACE=$(ip route show default | awk '{print $5}' | head -1)
+
+# Prompt for uplink interface
+log "\n${YELLOW}Detected default interface: ${DEFAULT_IFACE:-none}${NC}"
+read -p "Enter uplink interface name [${DEFAULT_IFACE}]: " UPLINK
+UPLINK=${UPLINK:-$DEFAULT_IFACE}
+
+[[ -z "$UPLINK" ]] && error_exit "No uplink interface specified"
+[[ ! -d "/sys/class/net/$UPLINK" ]] && error_exit "Interface $UPLINK does not exist"
+
+log "${GREEN}Using uplink: $UPLINK${NC}"
+
+# Introspect IP configuration
+log "\n${BLUE}=== IP Configuration Introspection ===${NC}"
+
 UPLINK_IP=$(ip -o -4 addr show "$UPLINK" | awk '{print $4}' | cut -d/ -f1 | head -1)
 UPLINK_PREFIX=$(ip -o -4 addr show "$UPLINK" | awk '{print $4}' | cut -d/ -f2 | head -1)
 GATEWAY=$(ip route show default | awk '{print $3}' | head -1)
 
-[[ -n "$UPLINK_IP" ]] || error_exit "Could not detect IP address for $UPLINK"
+log "IP Address: ${UPLINK_IP}/${UPLINK_PREFIX}"
+log "Gateway: ${GATEWAY}"
 
-# Create systemd-networkd configuration
-NETD_DIR="/etc/systemd/network"
+[[ -z "$UPLINK_IP" ]] && error_exit "No IP address found on $UPLINK"
+[[ -z "$GATEWAY" ]] && error_exit "No default gateway found"
 
-# Bridge netdev
-cat > "$NETD_DIR/10-ovsbr0.netdev" <<EOF
-[NetDev]
-Name=ovsbr0
-Kind=bridge
-EOF
+# Introspect DNS
+DNS_SERVERS=$(grep '^nameserver' /etc/resolv.conf | awk '{print $2}' | head -2 | tr '\n' ' ')
+log "DNS Servers: ${DNS_SERVERS:-8.8.8.8}"
 
-# Bridge network config
+# Confirm configuration
+log "\n${YELLOW}=== Configuration Summary ===${NC}"
+log "Uplink Interface: $UPLINK"
+log "IP Address: $UPLINK_IP/$UPLINK_PREFIX"
+log "Gateway: $GATEWAY"
+log "DNS: ${DNS_SERVERS:-8.8.8.8}"
+log "Bridge: ovsbr0"
+
+read -p "Proceed with installation? [y/N]: " CONFIRM
+[[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]] && error_exit "Installation cancelled"
+
+log "\n${BLUE}=== Starting Atomic Installation ===${NC}"
+
+# Step 1: Create bridge via OVSDB D-Bus
+log "${BLUE}[1/5] Creating OVS bridge via OVSDB D-Bus${NC}"
+./target/release/ovs-port-agent create-bridge ovsbr0 || error_exit "Failed to create bridge"
+
+# Step 2: Add port via OVSDB D-Bus
+log "${BLUE}[2/5] Adding $UPLINK to bridge via OVSDB D-Bus${NC}"
+./target/release/ovs-port-agent add-port ovsbr0 "$UPLINK" || {
+    rollback
+    error_exit "Failed to add port"
+}
+
+# Step 3: Create systemd-networkd configs
+log "${BLUE}[3/5] Creating systemd-networkd configuration${NC}"
+
 cat > "$NETD_DIR/30-ovsbr0.network" <<EOF
 [Match]
 Name=ovsbr0
@@ -54,47 +111,73 @@ Name=ovsbr0
 [Network]
 Address=$UPLINK_IP/$UPLINK_PREFIX
 Gateway=$GATEWAY
-DNS=8.8.8.8
+DNS=${DNS_SERVERS:-8.8.8.8}
 ConfigureWithoutCarrier=yes
+
+[Route]
+Gateway=$GATEWAY
+Metric=100
 EOF
 
-# Uplink attachment
 cat > "$NETD_DIR/20-$UPLINK.network" <<EOF
 [Match]
 Name=$UPLINK
 
 [Network]
-Bridge=ovsbr0
+ConfigureWithoutCarrier=yes
+
+[Link]
+RequiredForOnline=no
 EOF
 
-# Reload systemd-networkd
-log "${BLUE}Reloading systemd-networkd${NC}"
-systemctl reload-or-restart systemd-networkd || {
-    log "${RED}Reload failed, rolling back${NC}"
-    rm -f "$NETD_DIR"/{10-ovsbr0.netdev,20-$UPLINK.network,30-ovsbr0.network}
-    cp "/tmp/networkd-checkpoint-$CHECKPOINT_ID"/* "$NETD_DIR/" 2>/dev/null || true
-    systemctl reload-or-restart systemd-networkd
-    error_exit "Failed to create bridge"
+# Step 4: Reload networkd via D-Bus
+log "${BLUE}[4/5] Reloading systemd-networkd via D-Bus${NC}"
+dbus-send --system --dest=org.freedesktop.systemd1 \
+  /org/freedesktop/systemd1 \
+  org.freedesktop.systemd1.Manager.ReloadOrRestartUnit \
+  string:systemd-networkd.service string:replace || {
+    rollback
+    error_exit "Failed to reload networkd"
 }
 
-# Wait for network to stabilize
-sleep 3
+sleep 5
 
-# Verify bridge exists
-if ip link show ovsbr0 >/dev/null 2>&1; then
-    log "${GREEN}✓ Bridge created successfully${NC}"
-else
-    error_exit "Bridge verification failed"
+# Step 5: Test connectivity
+log "${BLUE}[5/5] Testing connectivity${NC}"
+if ! ping -c 3 -W 5 8.8.8.8 >/dev/null 2>&1; then
+    rollback
+    error_exit "Connectivity test failed"
 fi
 
-# Install the agent
+log "${GREEN}✓ Atomic handover complete${NC}"
+
+# Install agent
+log "\n${BLUE}=== Installing Agent ===${NC}"
 install -m 0755 target/release/ovs-port-agent /usr/local/bin/
 install -d /etc/ovs-port-agent
 [[ ! -f /etc/ovs-port-agent/config.toml ]] && install -m 0644 config/config.toml.example /etc/ovs-port-agent/config.toml
 install -m 0644 dbus/dev.ovs.PortAgent1.conf /etc/dbus-1/system.d/
 install -m 0644 systemd/ovs-port-agent.service /etc/systemd/system/
 
-systemctl daemon-reload
-systemctl enable --now ovs-port-agent
+sed -i 's/bridge_name = .*/bridge_name = "ovsbr0"/' /etc/ovs-port-agent/config.toml
 
-log "${GREEN}Installation complete - systemd-networkd bridge created${NC}"
+# Enable and start via D-Bus
+dbus-send --system --dest=org.freedesktop.systemd1 \
+  /org/freedesktop/systemd1 \
+  org.freedesktop.systemd1.Manager.Reload
+
+dbus-send --system --dest=org.freedesktop.systemd1 \
+  /org/freedesktop/systemd1 \
+  org.freedesktop.systemd1.Manager.EnableUnitFiles \
+  array:string:ovs-port-agent.service boolean:false boolean:true
+
+dbus-send --system --dest=org.freedesktop.systemd1 \
+  /org/freedesktop/systemd1 \
+  org.freedesktop.systemd1.Manager.StartUnit \
+  string:ovs-port-agent.service string:replace
+
+log "\n${GREEN}✓ Installation complete!${NC}"
+log "\nBridge: ovsbr0"
+log "Uplink: $UPLINK"
+log "IP: $UPLINK_IP/$UPLINK_PREFIX"
+log "Gateway: $GATEWAY"
