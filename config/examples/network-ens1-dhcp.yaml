@@ -1,9 +1,9 @@
 version: 1
 plugin: network
 
-network:
+networks:
   interfaces:
-    - name: "ens1"
+      name: "ens1"
       type: "ethernet"
       ports: []            # sequence required
       ipv4:
