@@ -3,3 +3,5 @@
 #![allow(unused_imports)]
 
 pub mod ovsdb_fuse;
+pub mod btrfs_snapshot;
+pub mod ovsdb_interceptor;
