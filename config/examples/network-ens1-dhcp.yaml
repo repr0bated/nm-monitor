@@ -1,12 +1,13 @@
 version: 1
 
-network:
-  interfaces:
-    - name: "ens1"
-      type: "ethernet"
-      ipv4:
-        enabled: true
-        dhcp: true
+plugins:
+  net:
+    interfaces:
+      - name: "ens1"
+        type: "ethernet"
+        ipv4:
+          enabled: true
+          dhcp: true
   netcfg:
     dns:
       hostname: "castlebox.ghostbridge.tech"
