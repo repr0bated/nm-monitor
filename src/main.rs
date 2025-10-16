@@ -9,7 +9,6 @@ mod streaming_blockchain;
 mod config;
 mod fuse;
 mod interfaces;
-mod ledger;
 mod link;
 mod logging;
 mod naming;
@@ -153,16 +152,9 @@ async fn main() -> Result<()> {
                 warn!(error = %err, "Failed to cleanup existing FUSE mounts");
             }
 
-            // Initialize ledger
-            let ledger = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ledger::Ledger::open(std::path::PathBuf::from(cfg.ledger_path())).map_err(|e| {
-                    crate::error::Error::Internal(format!("Failed to open ledger: {}", e))
-                })?,
-            ));
-
-            // Initialize state manager
+            // Initialize state manager (ledger functionality moved to streaming blockchain)
             let state_manager =
-                std::sync::Arc::new(state::manager::StateManager::new(ledger.clone()));
+                std::sync::Arc::new(state::manager::StateManager::new());
 
             // Register plugins
             state_manager
@@ -171,12 +163,21 @@ async fn main() -> Result<()> {
             state_manager
                 .register_plugin(Box::new(state::plugins::NetcfgStatePlugin::new()))
                 .await;
+            state_manager
+                .register_plugin(Box::new(state::plugins::DockerStatePlugin::new()))
+                .await;
+            state_manager
+                .register_plugin(Box::new(state::plugins::NetmakerStatePlugin::new()))
+                .await;
+            state_manager
+                .register_plugin(Box::new(state::plugins::DockerStatePlugin::new()))
+                .await;
 
             // Set up streaming blockchain and footprint channel
             let (footprint_tx, footprint_rx) = tokio::sync::mpsc::unbounded_channel();
             let streaming_blockchain = Arc::new(
                 streaming_blockchain::StreamingBlockchain::new("/var/lib/blockchain").await
-                    .map_err(|e| error::Error::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?
+                    .map_err(|e| error::Error::Io(std::io::Error::other(e)))?
             );
             
             // Start footprint receiver
@@ -188,7 +189,7 @@ async fn main() -> Result<()> {
             // Set up RPC state for container interface creation/removal
             let rpc_state = rpc::AppState {
                 bridge: cfg.bridge_name().to_string(),
-                ledger_path: cfg.ledger_path().to_string(),
+                ledger_path: cfg.ledger_path().to_string(), // Keep for compatibility, but not used
                 state_manager: Some(state_manager),
                 streaming_blockchain,
                 footprint_sender: footprint_tx,
@@ -228,7 +229,7 @@ async fn main() -> Result<()> {
             .with_managed_tag(cfg.managed_block_tag().to_string())
             .with_enable_rename(cfg.enable_rename())
             .with_naming_template(cfg.naming_template().to_string())
-            .with_ledger_path(cfg.ledger_path().to_string());
+            .with_ledger_path(cfg.ledger_path().to_string()); // Ledger path kept for compatibility
 
             convert_result(netlink::create_container_interface(config).await)?;
 
@@ -263,7 +264,7 @@ async fn main() -> Result<()> {
             let client = ovsdb_dbus::OvsdbClient::new().await
                 .map_err(|e| error::Error::Internal(format!("Failed to connect to OVSDB: {}", e)))?;
             
-            let ports = client.list_bridge_ports(&cfg.bridge_name()).await
+            let ports = client.list_bridge_ports(cfg.bridge_name()).await
                 .map_err(|e| error::Error::Internal(format!("Failed to list ports: {}", e)))?;
             
             for port in ports {
@@ -299,10 +300,24 @@ async fn main() -> Result<()> {
             info!(bridge = %bridge_name, port = %port_name, "Adding port via OVSDB D-Bus");
             let client = ovsdb_dbus::OvsdbClient::new().await
                 .map_err(|e| error::Error::Internal(format!("Failed to connect to OVSDB: {}", e)))?;
-            
+
+            // Check if bridge exists before attempting to add port
+            println!("DEBUG: Checking if bridge '{}' exists...", bridge_name);
+            let bridge_exists = client.bridge_exists(&bridge_name).await
+                .map_err(|e| error::Error::Internal(format!("Failed to check bridge existence: {}", e)))?;
+
+            println!("DEBUG: Bridge '{}' exists: {}", bridge_name, bridge_exists);
+            if !bridge_exists {
+                return Err(error::Error::Internal(format!(
+                    "Bridge '{}' does not exist. Create the bridge first with: ovs-port-agent create-bridge {}",
+                    bridge_name, bridge_name
+                )));
+            }
+
+            println!("DEBUG: Attempting to add port '{}' to bridge '{}'", port_name, bridge_name);
             client.add_port(&bridge_name, &port_name).await
                 .map_err(|e| error::Error::Internal(format!("Failed to add port: {}", e)))?;
-            
+
             info!(bridge = %bridge_name, port = %port_name, "Port added successfully");
             println!("Port {} added to bridge {} successfully", port_name, bridge_name);
             Ok(())
@@ -313,18 +328,19 @@ async fn main() -> Result<()> {
         Commands::ApplyState { state_file } => {
             info!(file = ?state_file, "Applying declarative state");
 
-            // Initialize state manager
-            let ledger = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ledger::Ledger::open(std::path::PathBuf::from(cfg.ledger_path())).map_err(|e| {
-                    crate::error::Error::Internal(format!("Failed to open ledger: {}", e))
-                })?,
-            ));
-            let state_manager = state::manager::StateManager::new(ledger.clone());
+            // Initialize state manager (ledger functionality moved to streaming blockchain)
+            let state_manager = state::manager::StateManager::new();
             state_manager
                 .register_plugin(Box::new(state::plugins::NetStatePlugin::new()))
                 .await;
             state_manager
                 .register_plugin(Box::new(state::plugins::NetcfgStatePlugin::new()))
+                .await;
+            state_manager
+                .register_plugin(Box::new(state::plugins::DockerStatePlugin::new()))
+                .await;
+            state_manager
+                .register_plugin(Box::new(state::plugins::NetmakerStatePlugin::new()))
                 .await;
 
             // Load and apply state
@@ -351,18 +367,19 @@ async fn main() -> Result<()> {
         Commands::QueryState { plugin } => {
             info!(plugin = ?plugin, "Querying current state");
 
-            // Initialize state manager
-            let ledger = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ledger::Ledger::open(std::path::PathBuf::from(cfg.ledger_path())).map_err(|e| {
-                    crate::error::Error::Internal(format!("Failed to open ledger: {}", e))
-                })?,
-            ));
-            let state_manager = state::manager::StateManager::new(ledger.clone());
+            // Initialize state manager (ledger functionality moved to streaming blockchain)
+            let state_manager = state::manager::StateManager::new();
             state_manager
                 .register_plugin(Box::new(state::plugins::NetStatePlugin::new()))
                 .await;
             state_manager
                 .register_plugin(Box::new(state::plugins::NetcfgStatePlugin::new()))
+                .await;
+            state_manager
+                .register_plugin(Box::new(state::plugins::DockerStatePlugin::new()))
+                .await;
+            state_manager
+                .register_plugin(Box::new(state::plugins::NetmakerStatePlugin::new()))
                 .await;
 
             // Query state
@@ -384,18 +401,19 @@ async fn main() -> Result<()> {
         Commands::ShowDiff { state_file } => {
             info!(file = ?state_file, "Calculating state diff");
 
-            // Initialize state manager
-            let ledger = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ledger::Ledger::open(std::path::PathBuf::from(cfg.ledger_path())).map_err(|e| {
-                    crate::error::Error::Internal(format!("Failed to open ledger: {}", e))
-                })?,
-            ));
-            let state_manager = state::manager::StateManager::new(ledger.clone());
+            // Initialize state manager (ledger functionality moved to streaming blockchain)
+            let state_manager = state::manager::StateManager::new();
             state_manager
                 .register_plugin(Box::new(state::plugins::NetStatePlugin::new()))
                 .await;
             state_manager
                 .register_plugin(Box::new(state::plugins::NetcfgStatePlugin::new()))
+                .await;
+            state_manager
+                .register_plugin(Box::new(state::plugins::DockerStatePlugin::new()))
+                .await;
+            state_manager
+                .register_plugin(Box::new(state::plugins::NetmakerStatePlugin::new()))
                 .await;
 
             // Load desired state and calculate diff
