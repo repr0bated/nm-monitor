@@ -115,7 +115,12 @@ impl NetcfgStatePlugin {
             .output()
             .await;
             
-        if check_output.is_err() || !check_output.unwrap().status.success() {
+        let ovs_available = match check_output {
+            Ok(output) => output.status.success(),
+            Err(_) => false,
+        };
+
+        if !ovs_available {
             log::info!("OVS not available, skipping OVS flows query");
             return Ok(HashMap::new());
         }

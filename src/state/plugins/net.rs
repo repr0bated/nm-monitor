@@ -6,6 +6,7 @@ use crate::state::plugin::{
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use log;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -843,8 +844,13 @@ impl StatePlugin for NetStatePlugin {
                     let network_file = format!("{}/10-{}.network", self.config_dir, resource);
                     let netdev_file = format!("{}/10-{}.netdev", self.config_dir, resource);
 
-                    let _ = tokio::fs::remove_file(network_file).await;
-                    let _ = tokio::fs::remove_file(netdev_file).await;
+                    // Clean up network configuration files (ignore errors if files don't exist)
+                    if let Err(e) = tokio::fs::remove_file(&network_file).await {
+                        log::debug!("Failed to remove network file {:?}: {}", network_file, e);
+                    }
+                    if let Err(e) = tokio::fs::remove_file(&netdev_file).await {
+                        log::debug!("Failed to remove netdev file {:?}: {}", netdev_file, e);
+                    }
 
                     changes_applied.push(format!("Removed interface config: {}", resource));
                 }

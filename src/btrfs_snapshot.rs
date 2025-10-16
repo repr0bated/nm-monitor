@@ -20,10 +20,14 @@ impl SnapshotGuard {
 
 impl Drop for SnapshotGuard {
     fn drop(&mut self) {
-        // Synchronous delete on drop
-        let _ = std::process::Command::new("btrfs")
-            .args(["subvolume", "delete", self.path.to_str().unwrap()])
-            .output();
+        // Synchronous delete on drop - handle path conversion errors gracefully
+        if let Some(path_str) = self.path.to_str() {
+            let _ = std::process::Command::new("btrfs")
+                .args(["subvolume", "delete", path_str])
+                .output();
+        } else {
+            eprintln!("Warning: Failed to convert snapshot path to string for deletion");
+        }
     }
 }
 
@@ -55,14 +59,19 @@ impl BtrfsSnapshot {
         let snapshot_path = self.base_path.join(&snapshot_name);
         let source_path = self.base_path.join(source);
         
-        // Create instant snapshot
+        // Create instant snapshot - validate paths first
+        let source_str = source_path.to_str()
+            .ok_or_else(|| anyhow::anyhow!("Source path contains invalid UTF-8: {:?}", source_path))?;
+        let snapshot_str = snapshot_path.to_str()
+            .ok_or_else(|| anyhow::anyhow!("Snapshot path contains invalid UTF-8: {:?}", snapshot_path))?;
+
         let output = Command::new("btrfs")
             .args([
                 "subvolume",
                 "snapshot",
                 "-r", // read-only
-                source_path.to_str().unwrap(),
-                snapshot_path.to_str().unwrap(),
+                source_str,
+                snapshot_str,
             ])
             .output()
             .await
