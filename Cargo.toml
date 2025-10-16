@@ -11,6 +11,10 @@ path = "src/lib.rs"
 name = "ovs-port-agent"
 path = "src/main.rs"
 
+[[bin]]
+name = "ovsdb-dbus-wrapper"
+path = "src/bin/ovsdb-dbus-wrapper.rs"
+
 [dependencies]
 libc = "0.2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "signal", "fs"] }
