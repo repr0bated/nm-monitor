@@ -50,14 +50,14 @@ fn main() -> Result<()> {
     
     println!("[6/6] Mounting filesystem...");
     println!("      This will block - filesystem is now active");
-    println!("");
+    println!();
     println!("Filesystem structure:");
     println!("  {}/by-uuid/bridges/  - Bridges by UUID", mountpoint);
     println!("  {}/by-name/bridges/  - Bridges by name (symlinks)", mountpoint);
     println!("  {}/aliases/          - User-defined aliases", mountpoint);
-    println!("");
+    println!();
     println!("Press Ctrl+C to unmount");
-    println!("");
+    println!();
     
     match fuser::mount2(fs, mountpoint, &options) {
         Ok(_) => {
@@ -66,7 +66,7 @@ fn main() -> Result<()> {
         }
         Err(e) => {
             eprintln!("ERROR: Failed to mount filesystem: {}", e);
-            eprintln!("");
+            eprintln!();
             eprintln!("Common issues:");
             eprintln!("  - Mountpoint already in use: fusermount -u {}", mountpoint);
             eprintln!("  - Permission denied: Run as root");

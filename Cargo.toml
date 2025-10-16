@@ -23,13 +23,15 @@ path = "src/bin/ovsdb-fuse-mount.rs"
 name = "system-introspection"
 path = "src/bin/system-introspection.rs"
 
+[[bin]]
+name = "demo-without-ledger"
+path = "demo_without_ledger.rs"
+
 [dependencies]
 libc = "0.2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "signal", "fs"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_yaml = "0.9"
-toml = "0.8"
 async-trait = "0.1"
 md5 = "0.7"
 thiserror = "1"

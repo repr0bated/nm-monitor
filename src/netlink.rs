@@ -2,7 +2,6 @@ use crate::fuse::{
     bind_veth_interface_enhanced, ensure_fuse_mount_base, unbind_veth_interface_enhanced,
 };
 use crate::interfaces::update_interfaces_block;
-use crate::ledger::Ledger;
 use crate::link;
 use crate::naming::render_template;
 use anyhow::{Context, Result};
@@ -20,7 +19,7 @@ pub struct InterfaceConfig {
     pub managed_tag: String,
     pub enable_rename: bool,
     pub naming_template: String,
-    pub ledger_path: String,
+    pub ledger_path: String, // Kept for compatibility, now handled by streaming blockchain
 }
 
 impl InterfaceConfig {
@@ -97,17 +96,11 @@ pub async fn create_container_interface(config: InterfaceConfig) -> Result<()> {
                 );
                 return Err(e);
             } else {
-                // Log the rename
-                let mut lg = Ledger::open(PathBuf::from(&config.ledger_path))?;
-                let _ = lg.append(
-                    "interface_rename",
-                    serde_json::json!({
-                        "old": config.raw_ifname,
-                        "new": target_name,
-                        "bridge": config.bridge,
-                        "container_id": config.container_id,
-                        "vmid": config.vmid
-                    }),
+                // Interface rename logged via plugin footprints to streaming blockchain
+                // (ledger functionality moved to streaming blockchain)
+                info!(
+                    "Interface renamed {} -> {} for container {} on bridge {}",
+                    config.raw_ifname, target_name, config.container_id, config.bridge
                 );
             }
         }
@@ -115,17 +108,11 @@ pub async fn create_container_interface(config: InterfaceConfig) -> Result<()> {
 
     // No NetworkManager connections needed - using OVS directly via D-Bus
 
-    // Log the interface creation
-    let mut lg = Ledger::open(PathBuf::from(&config.ledger_path))?;
-    let _ = lg.append(
-        "interface_created",
-        serde_json::json!({
-            "interface": target_name,
-            "original": config.raw_ifname,
-            "bridge": config.bridge,
-            "container_id": config.container_id,
-            "vmid": config.vmid
-        }),
+    // Interface creation logged via plugin footprints to streaming blockchain
+    // (ledger functionality moved to streaming blockchain)
+    info!(
+        "Container interface created: {} for container {} (VMID {}) on bridge {}",
+        target_name, config.container_id, config.vmid, config.bridge
     );
 
     // Create enhanced FUSE bind mount for Proxmox visibility with full API compatibility
@@ -162,7 +149,7 @@ pub async fn remove_container_interface(
     interface_name: &str,
     interfaces_path: String,
     managed_tag: String,
-    ledger_path: String,
+    _ledger_path: String,
 ) -> Result<()> {
     let interfaces_path = PathBuf::from(interfaces_path);
 
@@ -178,14 +165,11 @@ pub async fn remove_container_interface(
         );
     }
 
-    // Log the interface removal
-    let mut lg = Ledger::open(PathBuf::from(&ledger_path))?;
-    let _ = lg.append(
-        "interface_removed",
-        serde_json::json!({
-            "interface": interface_name,
-            "bridge": bridge
-        }),
+    // Interface removal logged via plugin footprints to streaming blockchain
+    // (ledger functionality moved to streaming blockchain)
+    info!(
+        "Container interface removed: {} on bridge {}",
+        interface_name, bridge
     );
 
     // Update /etc/network/interfaces

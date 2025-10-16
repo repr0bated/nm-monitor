@@ -87,14 +87,14 @@ impl OvsdbCache {
         self.path_to_inode.insert(path.to_string(), inode);
     }
     
-    fn allocate_inode(&mut self, path: String) -> u64 {
-        if let Some(&inode) = self.path_to_inode.get(&path) {
+    fn allocate_inode(&mut self, path: &str) -> u64 {
+        if let Some(&inode) = self.path_to_inode.get(path) {
             return inode;
         }
         
         let inode = self.next_inode;
         self.next_inode += 1;
-        self.register_path(inode, &path);
+        self.register_path(inode, path);
         inode
     }
     
@@ -103,17 +103,17 @@ impl OvsdbCache {
     }
     
     fn get_path(&self, inode: u64) -> Option<&str> {
-        self.inode_to_path.get(&inode).map(|s| s.as_str())
+        self.inode_to_path.get(&inode).map(String::as_str)
     }
     
     /// Add bridge to cache
-    fn add_bridge(&mut self, uuid: String, name: String, entity: OvsdbEntity) {
-        self.bridge_names.insert(name.clone(), uuid.clone());
-        self.bridges.insert(uuid.clone(), entity);
+    fn add_bridge(&mut self, uuid: &str, name: &str, entity: OvsdbEntity) {
+        self.bridge_names.insert(name.to_string(), uuid.to_string());
+        self.bridges.insert(uuid.to_string(), entity);
         
         // Allocate inodes for paths
-        self.allocate_inode(format!("/by-uuid/bridges/{}", uuid));
-        self.allocate_inode(format!("/by-name/bridges/{}", name));
+        self.allocate_inode(&format!("/by-uuid/bridges/{uuid}"));
+        self.allocate_inode(&format!("/by-name/bridges/{name}"));
     }
     
     /// Get bridge by name
@@ -134,16 +134,28 @@ pub struct OvsdbFuse {
 }
 
 impl OvsdbFuse {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             cache: Arc::new(RwLock::new(OvsdbCache::new())),
         }
     }
-    
+}
+
+impl Default for OvsdbFuse {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl OvsdbFuse {
     /// Initialize with sample data (for testing)
+    ///
+    /// # Panics
+    /// Panics if the cache lock is poisoned
     pub fn init_sample_data(&self) {
         let mut cache = self.cache.write().unwrap();
-        
+
         // Add sample bridge
         let bridge = OvsdbEntity {
             uuid: "550e8400-e29b-41d4-a716-446655440000".to_string(),
@@ -155,15 +167,15 @@ impl OvsdbFuse {
             ].into(),
             relationships: HashMap::new(),
         };
-        
+
         cache.add_bridge(
-            "550e8400-e29b-41d4-a716-446655440000".to_string(),
-            "ovsbr0".to_string(),
+            "550e8400-e29b-41d4-a716-446655440000",
+            "ovsbr0",
             bridge,
         );
     }
-    
-    fn get_attr(&self, inode: u64, file_type: FileType) -> FileAttr {
+
+    fn get_attr(inode: u64, file_type: FileType) -> FileAttr {
         FileAttr {
             ino: inode,
             size: 0,
@@ -189,25 +201,18 @@ impl Filesystem for OvsdbFuse {
         let cache = self.cache.read().unwrap();
         let name_str = name.to_str().unwrap();
         
-        let parent_path = match cache.get_path(parent) {
-            Some(p) => p,
-            None => {
-                reply.error(libc::ENOENT);
-                return;
-            }
+        let Some(parent_path) = cache.get_path(parent) else {
+            reply.error(libc::ENOENT);
+            return;
         };
         
-        let full_path = format!("{}/{}", parent_path, name_str);
+        let full_path = format!("{parent_path}/{name_str}");
         
         match full_path.as_str() {
-            "/by-uuid" | "/by-name" | "/aliases" => {
+            "/by-uuid" | "/by-name" | "/aliases" 
+            | "/by-uuid/bridges" | "/by-uuid/ports" | "/by-name/bridges" | "/by-name/ports" => {
                 let inode = cache.get_inode(&full_path).unwrap();
-                reply.entry(&TTL, &self.get_attr(inode, FileType::Directory), 0);
-            }
-            
-            "/by-uuid/bridges" | "/by-uuid/ports" | "/by-name/bridges" | "/by-name/ports" => {
-                let inode = cache.get_inode(&full_path).unwrap();
-                reply.entry(&TTL, &self.get_attr(inode, FileType::Directory), 0);
+                reply.entry(&TTL, &Self::get_attr(inode, FileType::Directory), 0);
             }
             
             path if path.starts_with("/by-name/bridges/") => {
@@ -216,9 +221,9 @@ impl Filesystem for OvsdbFuse {
                     let inode = cache.get_inode(&full_path)
                         .unwrap_or_else(|| {
                             drop(cache);
-                            self.cache.write().unwrap().allocate_inode(full_path.clone())
+                            self.cache.write().unwrap().allocate_inode(&full_path)
                         });
-                    reply.entry(&TTL, &self.get_attr(inode, FileType::Symlink), 0);
+                    reply.entry(&TTL, &Self::get_attr(inode, FileType::Symlink), 0);
                 } else {
                     reply.error(libc::ENOENT);
                 }
@@ -230,9 +235,9 @@ impl Filesystem for OvsdbFuse {
                     let inode = cache.get_inode(&full_path)
                         .unwrap_or_else(|| {
                             drop(cache);
-                            self.cache.write().unwrap().allocate_inode(full_path.clone())
+                            self.cache.write().unwrap().allocate_inode(&full_path)
                         });
-                    reply.entry(&TTL, &self.get_attr(inode, FileType::Directory), 0);
+                    reply.entry(&TTL, &Self::get_attr(inode, FileType::Directory), 0);
                 } else {
                     reply.error(libc::ENOENT);
                 }
@@ -266,7 +271,7 @@ impl Filesystem for OvsdbFuse {
             }
         };
         
-        reply.attr(&TTL, &self.get_attr(ino, file_type));
+        reply.attr(&TTL, &Self::get_attr(ino, file_type));
     }
     
     fn readdir(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64, mut reply: ReplyDirectory) {
@@ -292,7 +297,7 @@ impl Filesystem for OvsdbFuse {
             INODE_BY_UUID_BRIDGES => {
                 cache.bridges.keys()
                     .map(|uuid| {
-                        let path = format!("/by-uuid/bridges/{}", uuid);
+                        let path = format!("/by-uuid/bridges/{uuid}");
                         let inode = cache.get_inode(&path).unwrap();
                         (inode, FileType::Directory, uuid.clone())
                     })
@@ -302,7 +307,7 @@ impl Filesystem for OvsdbFuse {
             INODE_BY_NAME_BRIDGES => {
                 cache.bridge_names.keys()
                     .map(|name| {
-                        let path = format!("/by-name/bridges/{}", name);
+                        let path = format!("/by-name/bridges/{name}");
                         let inode = cache.get_inode(&path).unwrap();
                         (inode, FileType::Symlink, name.clone())
                     })
@@ -312,6 +317,7 @@ impl Filesystem for OvsdbFuse {
             _ => vec![],
         };
         
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_possible_wrap)]
         for (i, (inode, file_type, name)) in entries.into_iter().enumerate().skip(offset as usize) {
             if reply.add(inode, (i + 1) as i64, file_type, name) {
                 break;

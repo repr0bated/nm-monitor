@@ -10,6 +10,7 @@ use zbus::{interface, ConnectionBuilder};
 const OVSDB_BASE: &str = "/var/lib/openvswitch";
 
 struct OvsdbWrapper {
+    #[allow(dead_code)]
     base_path: PathBuf,
 }
 

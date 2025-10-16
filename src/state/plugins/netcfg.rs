@@ -66,6 +66,12 @@ pub struct NetcfgStatePlugin {
     routes_file: String,
 }
 
+impl Default for NetcfgStatePlugin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NetcfgStatePlugin {
     pub fn new() -> Self {
         Self {

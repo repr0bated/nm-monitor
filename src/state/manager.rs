@@ -1,5 +1,5 @@
 // State manager orchestrator - coordinates plugins and provides atomic operations
-use crate::ledger::Ledger;
+// Note: Ledger functionality has been replaced with streaming blockchain
 use crate::state::plugin::{ApplyResult, Checkpoint, StateDiff, StatePlugin};
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -7,7 +7,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 
 /// Desired state loaded from YAML/JSON
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,15 +33,19 @@ pub struct ApplyReport {
 /// State manager coordinates all plugins and provides atomic operations
 pub struct StateManager {
     plugins: Arc<RwLock<HashMap<String, Box<dyn StatePlugin>>>>,
-    ledger: Arc<Mutex<Ledger>>,
+}
+
+impl Default for StateManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StateManager {
-    /// Create a new state manager
-    pub fn new(ledger: Arc<Mutex<Ledger>>) -> Self {
+    /// Create a new state manager (ledger replaced with streaming blockchain)
+    pub fn new() -> Self {
         Self {
             plugins: Arc::new(RwLock::new(HashMap::new())),
-            ledger,
         }
     }
 
@@ -53,20 +57,12 @@ impl StateManager {
         log::info!("Registered state plugin: {}", name);
     }
 
-    /// Load desired state from YAML/JSON file
+    /// Load desired state from JSON file
     pub async fn load_desired_state(&self, path: &Path) -> Result<DesiredState> {
         let content = tokio::fs::read_to_string(path).await?;
 
-        // Try YAML first, fall back to JSON
-        if path.extension().and_then(|s| s.to_str()) == Some("yaml")
-            || path.extension().and_then(|s| s.to_str()) == Some("yml")
-        {
-            serde_yaml::from_str(&content)
-                .map_err(|e| anyhow!("Failed to parse YAML: {}. Content:\n{}", e, content))
-        } else {
-            serde_json::from_str(&content)
-                .map_err(|e| anyhow!("Failed to parse JSON: {}", e))
-        }
+        serde_json::from_str(&content)
+            .map_err(|e| anyhow!("Failed to parse JSON state file: {}", e))
     }
 
     /// Query current state across all plugins
@@ -197,18 +193,8 @@ impl StateManager {
                         log::error!("Plugin {} returned success=false, but not triggering rollback (treating as warning)", diff.plugin);
                     }
 
-                    // Log to blockchain ledger
-                    if let Ok(mut ledger) = self.ledger.try_lock() {
-                        if let Err(e) = ledger.append(
-                            "apply_state",
-                            serde_json::json!({
-                                "plugin": diff.plugin,
-                                "result": result,
-                            }),
-                        ) {
-                            log::error!("Failed to log to ledger: {}", e);
-                        }
-                    }
+                    // State changes are automatically logged to streaming blockchain via plugin footprints
+                    // (ledger functionality moved to streaming blockchain)
 
                     results.push(result);
                 }
@@ -269,18 +255,7 @@ impl StateManager {
                     // Continue rolling back other plugins
                 }
 
-                // Log rollback to blockchain
-                if let Ok(mut ledger) = self.ledger.try_lock() {
-                    if let Err(e) = ledger.append(
-                        "rollback",
-                        serde_json::json!({
-                            "plugin": plugin_name,
-                            "checkpoint_id": checkpoint.id
-                        }),
-                    ) {
-                        log::error!("Failed to log rollback to ledger: {}", e);
-                    }
-                }
+                // Rollback actions are logged via plugin footprints to streaming blockchain
             }
         }
 

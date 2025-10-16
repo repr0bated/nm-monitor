@@ -29,7 +29,7 @@ use tracing::{info, warn};
 #[derive(Parser)]
 #[command(name = "ovs-port-agent", version, about = "OVS container port agent", long_about=None)]
 struct Cli {
-    /// Path to config file is (default: /etc/ovs-port-agent/config.toml)
+    /// Path to config file is (default: /etc/ovs-port-agent/config.json)
     #[arg(global = true)]
     config: Option<PathBuf>,
 
@@ -78,9 +78,9 @@ enum Commands {
     },
     /// Comprehensive systemd-networkd introspection and debugging
     IntrospectSystemd,
-    /// Apply declarative state from YAML file
+    /// Apply declarative state from JSON file
     ApplyState {
-        /// Path to state YAML file
+        /// Path to state JSON file
         state_file: std::path::PathBuf,
     },
     /// Query current system state
@@ -90,7 +90,7 @@ enum Commands {
     },
     /// Show diff between current and desired state
     ShowDiff {
-        /// Path to desired state YAML file
+        /// Path to desired state JSON file
         state_file: std::path::PathBuf,
     },
 }
@@ -302,11 +302,9 @@ async fn main() -> Result<()> {
                 .map_err(|e| error::Error::Internal(format!("Failed to connect to OVSDB: {}", e)))?;
 
             // Check if bridge exists before attempting to add port
-            println!("DEBUG: Checking if bridge '{}' exists...", bridge_name);
             let bridge_exists = client.bridge_exists(&bridge_name).await
                 .map_err(|e| error::Error::Internal(format!("Failed to check bridge existence: {}", e)))?;
 
-            println!("DEBUG: Bridge '{}' exists: {}", bridge_name, bridge_exists);
             if !bridge_exists {
                 return Err(error::Error::Internal(format!(
                     "Bridge '{}' does not exist. Create the bridge first with: ovs-port-agent create-bridge {}",
@@ -314,7 +312,6 @@ async fn main() -> Result<()> {
                 )));
             }
 
-            println!("DEBUG: Attempting to add port '{}' to bridge '{}'", port_name, bridge_name);
             client.add_port(&bridge_name, &port_name).await
                 .map_err(|e| error::Error::Internal(format!("Failed to add port: {}", e)))?;
 

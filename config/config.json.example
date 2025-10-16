@@ -1,0 +1,43 @@
+{
+  "bridge": {
+    "name": "vmbr0",
+    "uplink": null,
+    "datapath_type": "system",
+    "fail_mode": "standalone",
+    "stp_enable": false,
+    "rstp_enable": false,
+    "mcast_snooping_enable": true
+  },
+  "network_manager": {
+    "interfaces_path": "/etc/network/interfaces",
+    "include_prefixes": ["veth", "tap"],
+    "managed_block_tag": "ovs-port-agent",
+    "naming_template": "vi_{container}",
+    "enable_rename": true,
+    "unmanaged_devices": ["lo", "docker0"],
+    "connection_timeout": 45
+  },
+  "fuse": {
+    "enabled": true,
+    "mount_base": "/var/lib/ovs-port-agent/fuse",
+    "proxmox_api_base": "/var/lib/ovs-port-agent/proxmox"
+  },
+  "ledger": {
+    "enabled": true,
+    "path": "/var/lib/ovs-port-agent/ledger.jsonl",
+    "max_size_mb": 100,
+    "compression_enabled": true
+  },
+  "metrics": {
+    "enabled": true,
+    "port": 9090,
+    "path": "/metrics"
+  },
+  "logging": {
+    "level": "info",
+    "structured": true,
+    "journald": true
+  }
+}
+
+

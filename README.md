@@ -574,29 +574,51 @@ See [AGENTS.md](AGENTS.md) for contributor guidelines covering:
 This system provides **enterprise-grade network management** with **complete accountability** and **zero-connectivity-risk** deployment capabilities! 🛡️
 
 ## Configuration
-File: `/etc/ovs-port-agent/config.toml`
+File: `/etc/ovs-port-agent/config.json`
 
-```toml
-# Name of the Open vSwitch bridge to manage
-bridge_name = "vmbr0"
-
-# Interfaces file to update for Proxmox visibility
-interfaces_path = "/etc/network/interfaces"
-
-# Interface name prefixes to include as container ports
-include_prefixes = ["veth-", "tap", "veth"]
-
-# Debounce interval for periodic reconcile (ms)
-debounce_ms = 500
-
-# Tag for the bounded block in /etc/network/interfaces
-managed_block_tag = "ovs-port-agent"
-
-# Naming template (≤15 chars after sanitize); variables {container}, {index}
-naming_template = "veth-{container}-eth{index}"
-
-# Enable renaming from raw veth to the template name
-enable_rename = false
+```json
+{
+  "bridge": {
+    "name": "vmbr0",
+    "uplink": null,
+    "datapath_type": "system",
+    "fail_mode": "standalone",
+    "stp_enable": false,
+    "rstp_enable": false,
+    "mcast_snooping_enable": true
+  },
+  "network_manager": {
+    "interfaces_path": "/etc/network/interfaces",
+    "include_prefixes": ["veth-", "tap", "veth"],
+    "managed_block_tag": "ovs-port-agent",
+    "naming_template": "veth-{container}-eth{index}",
+    "enable_rename": false,
+    "unmanaged_devices": ["lo", "docker0"],
+    "connection_timeout": 45
+  },
+  "fuse": {
+    "enabled": true,
+    "mount_base": "/var/lib/ovs-port-agent/fuse",
+    "proxmox_api_base": "/var/lib/ovs-port-agent/proxmox"
+  },
+  "ledger": {
+    "enabled": true,
+    "path": "/var/lib/ovs-port-agent/ledger.jsonl",
+    "max_size_mb": 100,
+    "compression_enabled": true
+  },
+  "metrics": {
+    "enabled": true,
+    "port": 9090,
+    "path": "/metrics"
+  },
+  "logging": {
+    "level": "info",
+    "structured": true,
+    "journald": true
+  }
+}
+```
 
 # Optional helper to resolve container name (advanced)
 # container_name_cmd = "/usr/local/bin/container-name-from-netns {ifname}"

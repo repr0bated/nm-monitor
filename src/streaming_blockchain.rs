@@ -1,12 +1,19 @@
 #![allow(dead_code, unused_imports)]
 //! Streaming blockchain with vectorization and dual btrfs subvolumes
+//!
+//! This module provides a streaming blockchain implementation that:
+//! 1. Automatically generates hashed footprints for all object modifications
+//! 2. Stores timing and vector data in separate btrfs subvolumes
+//! 3. Creates snapshots for each block
+//! 4. Streams vector data to remote vector databases via btrfs send/receive
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use crate::plugin_footprint::PluginFootprint;
+use tokio::time::{sleep, Duration};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlockEvent {

@@ -61,17 +61,17 @@ impl PortAgent {
             .map_err(|e| zbus::fdo::Error::Failed(format!("Failed to list ports: {}", e)))
     }
 
-    async fn apply_state(&self, state_yaml: &str) -> zbus::fdo::Result<String> {
+    async fn apply_state(&self, state_json: &str) -> zbus::fdo::Result<String> {
         debug!("D-Bus call: apply_state");
         if let Some(ref state_manager) = self.state.state_manager {
-            match serde_yaml::from_str(state_yaml) {
+            match serde_json::from_str(state_json) {
                 Ok(desired_state) => {
                     match state_manager.apply_state(desired_state).await {
                         Ok(report) => Ok(serde_json::to_string(&report).unwrap_or_default()),
                         Err(e) => Err(zbus::fdo::Error::Failed(format!("Apply state failed: {}", e)))
                     }
                 }
-                Err(e) => Err(zbus::fdo::Error::InvalidArgs(format!("Invalid YAML: {}", e)))
+                Err(e) => Err(zbus::fdo::Error::InvalidArgs(format!("Invalid JSON: {}", e)))
             }
         } else {
             Err(zbus::fdo::Error::Failed("State manager not available".into()))

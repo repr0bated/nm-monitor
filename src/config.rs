@@ -232,16 +232,16 @@ impl Config {
             vec![p.to_path_buf()]
         } else {
             vec![
-                "/etc/ovs-port-agent/config.toml".into(),
-                "config/config.toml".into(),
-                "config/config.toml.example".into(),
+                "/etc/ovs-port-agent/config.json".into(),
+                "config/config.json".into(),
+                "config/config.json.example".into(),
             ]
         };
 
         for candidate in candidates {
             if candidate.exists() {
                 let data = fs::read_to_string(&candidate).map_err(Error::Io)?;
-                let cfg: Config = toml::from_str(&data)
+                let cfg: Config = serde_json::from_str(&data)
                     .map_err(|e| Error::Config(format!("Failed to parse config: {}", e)))?;
 
                 // Validate configuration

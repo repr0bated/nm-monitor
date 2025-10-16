@@ -238,8 +238,8 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     let cache = Arc::new(RwLock::new(HashMap::new()));
-    
-    let conn = ConnectionBuilder::system()?
+
+    let _conn = ConnectionBuilder::system()?
         .name("org.system.introspection")?
         // Root object
         .serve_at("/", IntrospectionRoot)?
@@ -278,14 +278,14 @@ async fn main() -> Result<()> {
 
     println!("System Introspection Service running");
     println!("D-Bus name: org.system.introspection");
-    println!("");
+    println!();
     println!("Object tree:");
     println!("  /                              - Root");
     println!("  /network/bridges/ovsbr0        - OVS Bridge");
     println!("  /network/interfaces/ens1       - Network Interface");
     println!("  /aliases/vmbr0                 - Alias to ovsbr0");
     println!("  /aliases/eth0                  - Alias to ens1");
-    println!("");
+    println!();
     println!("Example usage:");
     println!("  busctl call org.system.introspection /network/bridges/ovsbr0 \\");
     println!("    org.system.introspection.Bridge Ports");
