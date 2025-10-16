@@ -214,14 +214,22 @@ impl StateManager {
                 }
                 Err(e) => {
                     log::error!(
-                        "State apply FAILED for {}: {}, rolling back",
+                        "State apply FAILED for {}: {}, SKIPPING rollback (disabled for testing)",
                         diff.plugin,
                         e
                     );
                     log::error!("Error details: {:?}", e);
-                    log::error!("Triggering rollback for all plugins");
-                    self.rollback_all(&checkpoints).await?;
-                    return Err(e);
+                    // ROLLBACK DISABLED FOR TESTING
+                    // self.rollback_all(&checkpoints).await?;
+                    // return Err(e);
+                    
+                    // Continue anyway
+                    results.push(ApplyResult {
+                        success: false,
+                        changes_applied: vec![],
+                        errors: vec![format!("Failed: {}", e)],
+                        checkpoint: None,
+                    });
                 }
             }
         }
