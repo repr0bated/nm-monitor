@@ -19,6 +19,10 @@ path = "src/bin/ovsdb-dbus-wrapper.rs"
 name = "ovsdb-fuse-mount"
 path = "src/bin/ovsdb-fuse-mount.rs"
 
+[[bin]]
+name = "system-introspection"
+path = "src/bin/system-introspection.rs"
+
 [dependencies]
 libc = "0.2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "signal", "fs"] }
