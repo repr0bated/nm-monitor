@@ -589,8 +589,6 @@ impl NetStatePlugin {
 
     /// Write network configuration files
     async fn write_config_files(&self, config: &InterfaceConfig) -> Result<()> {
-        use tokio::fs;
-
         // Validate configuration first
         self.validate_interface_config(config)?;
 
@@ -607,24 +605,46 @@ impl NetStatePlugin {
                     self.attach_ovs_port(&config.name, port).await?;
                 }
             }
+            
+            // Configure IP via D-Bus instead of config files
+            if let Some(ipv4) = &config.ipv4 {
+                if ipv4.enabled {
+                    self.configure_ip_via_dbus(&config.name, ipv4).await?;
+                }
+            }
+            
+            return Ok(());
         }
 
+        // For non-OVS interfaces, use traditional config files
         let network_file_path = format!("{}/10-{}.network", self.config_dir, config.name);
-
-        // Write .network file
         let network_content = self.generate_network_file(config);
-        fs::write(&network_file_path, network_content)
+        tokio::fs::write(&network_file_path, network_content)
             .await
             .context("Failed to write .network file")?;
 
-        // Write .netdev file if needed
-        if let Some(netdev_content) = self.generate_netdev_file(config) {
-            let netdev_file_path = format!("{}/10-{}.netdev", self.config_dir, config.name);
-            fs::write(&netdev_file_path, netdev_content)
-                .await
-                .context("Failed to write .netdev file")?;
+        Ok(())
+    }
+    
+    /// Configure IP address via D-Bus (no config files)
+    async fn configure_ip_via_dbus(&self, interface: &str, ipv4: &Ipv4Config) -> Result<()> {
+        if ipv4.dhcp.unwrap_or(false) {
+            log::info!("Configuring DHCP on {} via D-Bus", interface);
+            
+            // Use ip command to bring interface up and start DHCP
+            AsyncCommand::new("ip")
+                .args(["link", "set", interface, "up"])
+                .output()
+                .await?;
+                
+            // Start dhclient for DHCP
+            AsyncCommand::new("dhclient")
+                .arg(interface)
+                .spawn()?;
+                
+            log::info!("DHCP started on {}", interface);
         }
-
+        
         Ok(())
     }
 
