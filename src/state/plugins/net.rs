@@ -603,6 +603,13 @@ impl NetStatePlugin {
             if let Some(ports) = &config.ports {
                 for port in ports {
                     self.attach_ovs_port(&config.name, port).await?;
+                    
+                    // Copy MAC address from first port to bridge for DHCP compatibility
+                    if ports.len() == 1 {
+                        let mac = self.get_interface_mac(port).await?;
+                        self.set_bridge_mac(&config.name, &mac).await?;
+                        log::info!("Set bridge {} MAC to {} (from {})", config.name, mac, port);
+                    }
                 }
             }
             
@@ -693,6 +700,25 @@ impl NetStatePlugin {
         }
         
         Ok(bridges)
+    }
+    
+    /// Get MAC address of an interface
+    async fn get_interface_mac(&self, interface: &str) -> Result<String> {
+        let mac_path = format!("/sys/class/net/{}/address", interface);
+        let mac = tokio::fs::read_to_string(&mac_path)
+            .await
+            .context(format!("Failed to read MAC address for {}", interface))?;
+        Ok(mac.trim().to_string())
+    }
+    
+    /// Set bridge MAC address
+    async fn set_bridge_mac(&self, bridge: &str, mac: &str) -> Result<()> {
+        AsyncCommand::new("ovs-vsctl")
+            .args(["set", "bridge", bridge, &format!("other-config:hwaddr={}", mac)])
+            .output()
+            .await
+            .context("Failed to set bridge MAC address")?;
+        Ok(())
     }
 }
 
