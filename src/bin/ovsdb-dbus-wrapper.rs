@@ -69,7 +69,10 @@ impl OvsdbWrapper {
 
     /// Delete bridge
     async fn delete_bridge(&self, bridge_name: String) -> zbus::fdo::Result<()> {
-        eprintln!("[OVSDB] Deleting bridge: {}", bridge_name);
+        eprintln!("========================================");
+        eprintln!("[OVSDB] DELETE BRIDGE CALLED: {}", bridge_name);
+        eprintln!("[OVSDB] This should NOT happen unless rollback is triggered");
+        eprintln!("========================================");
         
         self.exec_via_snapshot(&["--if-exists", "del-br", &bridge_name])
             .await
