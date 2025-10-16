@@ -1,0 +1,14 @@
+# Working OVS Bridge config with correct format
+version: 1
+
+plugins:
+  net:
+    interfaces:
+      # Primary OVS bridge with uplink
+      - name: ovsbr0
+        type: ovs-bridge
+        ports:
+          - ens1
+        ipv4:
+          enabled: true
+          dhcp: true
