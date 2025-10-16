@@ -246,6 +246,9 @@ impl StateManager {
 
     /// Rollback all plugins to checkpoints
     async fn rollback_all(&self, checkpoints: &[(String, Checkpoint)]) -> Result<()> {
+        log::error!("========== ROLLBACK TRIGGERED ==========");
+        log::error!("Rolling back {} plugins", checkpoints.len());
+        
         let plugins = self.plugins.read().await;
 
         log::warn!("Rolling back {} plugins", checkpoints.len());
