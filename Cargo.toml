@@ -15,6 +15,10 @@ path = "src/main.rs"
 name = "ovsdb-dbus-wrapper"
 path = "src/bin/ovsdb-dbus-wrapper.rs"
 
+[[bin]]
+name = "ovsdb-fuse-mount"
+path = "src/bin/ovsdb-fuse-mount.rs"
+
 [dependencies]
 libc = "0.2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "signal", "fs"] }
@@ -47,3 +51,4 @@ validator = { version = "0.20.0", features = ["derive"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 gethostname = "0.4"
+fuser = "0.14"
