@@ -114,18 +114,11 @@ read -p "Proceed with installation? [y/N]: " CONFIRM
 log "\n${BLUE}=== Starting Atomic Installation ===${NC}"
 
 # Step 1: Create bridge via OVSDB D-Bus
-log "${BLUE}[1/5] Creating OVS bridge via OVSDB D-Bus${NC}"
+log "${BLUE}[1/6] Creating OVS bridge via OVSDB D-Bus${NC}"
 ./target/release/ovs-port-agent create-bridge ovsbr0 || error_exit "Failed to create bridge"
 
-# Step 2: Add port via OVSDB D-Bus
-log "${BLUE}[2/5] Adding $UPLINK to bridge via OVSDB D-Bus${NC}"
-./target/release/ovs-port-agent add-port ovsbr0 "$UPLINK" || {
-    rollback
-    error_exit "Failed to add port"
-}
-
-# Step 3: Create systemd-networkd configs
-log "${BLUE}[3/5] Creating systemd-networkd configuration${NC}"
+# Step 2: Create systemd-networkd configs BEFORE adding port
+log "${BLUE}[2/6] Creating systemd-networkd configuration${NC}"
 
 cat > "$NETD_DIR/30-ovsbr0.network" <<EOF
 [Match]
@@ -153,8 +146,8 @@ ConfigureWithoutCarrier=yes
 RequiredForOnline=no
 EOF
 
-# Step 4: Reload networkd via D-Bus
-log "${BLUE}[4/5] Reloading systemd-networkd via D-Bus${NC}"
+# Step 3: Reload networkd BEFORE adding port (so it knows about bridge)
+log "${BLUE}[3/6] Reloading systemd-networkd via D-Bus${NC}"
 dbus-send --system --dest=org.freedesktop.systemd1 \
   /org/freedesktop/systemd1 \
   org.freedesktop.systemd1.Manager.ReloadOrRestartUnit \
@@ -163,10 +156,21 @@ dbus-send --system --dest=org.freedesktop.systemd1 \
     error_exit "Failed to reload networkd"
 }
 
+sleep 2
+
+# Step 4: NOW add port (networkd won't interfere)
+log "${BLUE}[4/6] Adding $UPLINK to bridge via OVSDB D-Bus${NC}"
+./target/release/ovs-port-agent add-port ovsbr0 "$UPLINK" || {
+    rollback
+    error_exit "Failed to add port"
+}
+
+# Step 5: Bring bridge up and wait for IP
+log "${BLUE}[5/6] Waiting for bridge to get IP${NC}"
 sleep 5
 
-# Step 5: Test connectivity
-log "${BLUE}[5/5] Testing connectivity${NC}"
+# Step 6: Test connectivity
+log "${BLUE}[6/6] Testing connectivity${NC}"
 if ! ping -c 3 -W 5 8.8.8.8 >/dev/null 2>&1; then
     rollback
     error_exit "Connectivity test failed"
