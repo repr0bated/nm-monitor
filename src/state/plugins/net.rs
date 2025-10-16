@@ -393,17 +393,13 @@ impl NetStatePlugin {
     /// Note: OVS bridges are created via ovs-vsctl, but systemd-networkd
     /// needs a .netdev file to recognize them as managed interfaces
     fn generate_netdev_file(&self, config: &InterfaceConfig) -> Option<String> {
+        // Don't create .netdev files for OVS bridges - they're created by ovs-vsctl
+        // systemd-networkd doesn't support Kind=openvswitch and gets confused
         if config.if_type == InterfaceType::OvsBridge {
-            // systemd-networkd doesn't directly support OVS, but we still write
-            // a minimal .netdev to signal this is a managed interface
-            // The actual OVS bridge is created by ovs-vsctl
-            Some(format!(
-                "[NetDev]\nName={}\nKind=bridge\nDescription=OVS Bridge managed by ovs-port-agent\n",
-                config.name
-            ))
-        } else {
-            None
+            return None;
         }
+        
+        None
     }
 
     /// Create OVS bridge using OVSDB D-Bus
