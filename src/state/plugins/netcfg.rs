@@ -341,6 +341,13 @@ impl StatePlugin for NetcfgStatePlugin {
         let ovs_flows = self.query_ovs_flows().await?;
         let dns = self.query_dns().await?;
 
+        // Only include DNS if it has actual configuration
+        let dns_config = if dns.hostname.is_some() || dns.search_domains.is_some() {
+            Some(dns)
+        } else {
+            None
+        };
+
         let config = NetcfgConfig {
             routing: if routes.is_empty() {
                 None
@@ -357,7 +364,7 @@ impl StatePlugin for NetcfgStatePlugin {
                 }
                 Some(all_flows)
             },
-            dns: Some(dns),
+            dns: dns_config,
         };
 
         Ok(serde_json::to_value(config)?)
@@ -369,37 +376,43 @@ impl StatePlugin for NetcfgStatePlugin {
 
         let mut actions = Vec::new();
 
-        // Check routing changes
-        if desired_config.routing != current_config.routing {
-            actions.push(StateAction::Modify {
-                resource: "routing".to_string(),
-                changes: serde_json::json!({
-                    "old": current_config.routing,
-                    "new": desired_config.routing,
-                }),
-            });
+        // Check routing changes - only if desired explicitly specifies routing
+        if let Some(desired_routing) = &desired_config.routing {
+            if current_config.routing.as_ref() != Some(desired_routing) {
+                actions.push(StateAction::Modify {
+                    resource: "routing".to_string(),
+                    changes: serde_json::json!({
+                        "old": current_config.routing,
+                        "new": desired_routing,
+                    }),
+                });
+            }
         }
 
-        // Check OVS flow changes
-        if desired_config.ovs_flows != current_config.ovs_flows {
-            actions.push(StateAction::Modify {
-                resource: "ovs_flows".to_string(),
-                changes: serde_json::json!({
-                    "old": current_config.ovs_flows,
-                    "new": desired_config.ovs_flows,
-                }),
-            });
+        // Check OVS flow changes - only if desired explicitly specifies OVS flows
+        if let Some(desired_flows) = &desired_config.ovs_flows {
+            if current_config.ovs_flows.as_ref() != Some(desired_flows) {
+                actions.push(StateAction::Modify {
+                    resource: "ovs_flows".to_string(),
+                    changes: serde_json::json!({
+                        "old": current_config.ovs_flows,
+                        "new": desired_flows,
+                    }),
+                });
+            }
         }
 
-        // Check DNS changes
-        if desired_config.dns != current_config.dns {
-            actions.push(StateAction::Modify {
-                resource: "dns".to_string(),
-                changes: serde_json::json!({
-                    "old": current_config.dns,
-                    "new": desired_config.dns,
-                }),
-            });
+        // Check DNS changes - only if desired explicitly specifies DNS
+        if let Some(desired_dns) = &desired_config.dns {
+            if current_config.dns.as_ref() != Some(desired_dns) {
+                actions.push(StateAction::Modify {
+                    resource: "dns".to_string(),
+                    changes: serde_json::json!({
+                        "old": current_config.dns,
+                        "new": desired_dns,
+                    }),
+                });
+            }
         }
 
         let current_json = serde_json::to_string(&current_config)?;
