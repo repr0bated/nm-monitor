@@ -1,4 +1,4 @@
-#![allow(dead_code, unused_imports)]
+#![allow(unused_imports)]
 //! Streaming blockchain with vectorization and dual btrfs subvolumes
 //!
 //! This module provides a streaming blockchain implementation that:

@@ -103,6 +103,7 @@ pub struct ConnectivityStatus {
 /// Netmaker state plugin implementation
 pub struct NetmakerStatePlugin {
     docker_plugin: crate::state::plugins::DockerStatePlugin,
+    #[allow(dead_code)]
     blockchain_sender: Option<tokio::sync::mpsc::UnboundedSender<PluginFootprint>>,
 }
 
@@ -114,6 +115,7 @@ impl NetmakerStatePlugin {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_blockchain_sender(
         blockchain_sender: tokio::sync::mpsc::UnboundedSender<PluginFootprint>,
     ) -> Self {
@@ -124,6 +126,7 @@ impl NetmakerStatePlugin {
     }
 
     /// Create footprint for Netmaker operations
+    #[allow(dead_code)]
     fn create_footprint(&self, operation: &str, data: &Value) -> Result<()> {
         if let Some(sender) = &self.blockchain_sender {
             let mut metadata = HashMap::new();

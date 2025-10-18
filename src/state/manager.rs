@@ -117,44 +117,38 @@ impl StateManager {
         Ok(diffs)
     }
 
-    /// Verify all states match desired
-    async fn verify_all_states(&self, desired: &DesiredState) -> Result<bool> {
-        let plugins = self.plugins.read().await;
-
-        for (plugin_name, desired_state) in &desired.plugins {
-            if let Some(plugin) = plugins.get(plugin_name) {
-                if !plugin.verify_state(desired_state).await? {
-                    log::error!("State verification failed for plugin: {}", plugin_name);
-                    return Ok(false);
-                }
-            }
-        }
-
-        Ok(true)
-    }
 
     /// Apply desired state atomically across all plugins
     pub async fn apply_state(&self, desired: DesiredState) -> Result<ApplyReport> {
-        let plugins = self.plugins.read().await;
         let mut checkpoints = Vec::new();
         let mut results = Vec::new();
 
         log::info!("Starting atomic state apply operation");
 
         // Phase 1: Create checkpoints for all affected plugins
+        // Note: Lock is acquired briefly for each plugin to minimize contention
         log::info!("Phase 1: Creating checkpoints");
         for (plugin_name, _desired_state) in desired.plugins.iter() {
-            if let Some(plugin) = plugins.get(plugin_name) {
-                match plugin.create_checkpoint().await {
-                    Ok(checkpoint) => {
-                        log::info!("Created checkpoint for plugin: {}", plugin_name);
-                        checkpoints.push((plugin_name.clone(), checkpoint));
+            // Acquire lock, check if plugin exists, and create checkpoint
+            let checkpoint_opt = {
+                let plugins = self.plugins.read().await;
+                if let Some(plugin) = plugins.get(plugin_name) {
+                    // Call create_checkpoint while holding the lock (briefly)
+                    match plugin.create_checkpoint().await {
+                        Ok(checkpoint) => Some(checkpoint),
+                        Err(e) => {
+                            log::error!("Failed to create checkpoint for {}: {}", plugin_name, e);
+                            None
+                        }
                     }
-                    Err(e) => {
-                        log::error!("Failed to create checkpoint for {}: {}", plugin_name, e);
-                        // Continue without checkpoint if plugin doesn't support it
-                    }
+                } else {
+                    None
                 }
+            };
+
+            if let Some(checkpoint) = checkpoint_opt {
+                log::info!("Created checkpoint for plugin: {}", plugin_name);
+                checkpoints.push((plugin_name.clone(), checkpoint));
             }
         }
 
@@ -180,12 +174,21 @@ impl StateManager {
         // Phase 3: Apply changes in dependency order
         log::info!("Phase 3: Applying changes ({} plugins)", diffs.len());
         for diff in diffs {
-            let plugin = plugins.get(&diff.plugin).unwrap();
+            // Acquire lock, check if plugin exists, and apply state
+            let apply_result = {
+                let plugins = self.plugins.read().await;
+                if let Some(plugin) = plugins.get(&diff.plugin) {
+                    // Call apply_state while holding the lock (briefly)
+                    Some(plugin.apply_state(&diff).await)
+                } else {
+                    None
+                }
+            };
 
-            match plugin.apply_state(&diff).await {
-                Ok(result) => {
+            match apply_result {
+                Some(Ok(result)) => {
                     log::info!("Applied state for plugin: {}", diff.plugin);
-                    log::info!("Result success: {}, changes: {:?}, errors: {:?}", 
+                    log::info!("Result success: {}, changes: {:?}, errors: {:?}",
                         result.success, result.changes_applied, result.errors);
 
                     // Check if result indicates failure
@@ -198,7 +201,7 @@ impl StateManager {
 
                     results.push(result);
                 }
-                Err(e) => {
+                Some(Err(e)) => {
                     log::error!(
                         "State apply FAILED for {}: {}, SKIPPING rollback (disabled for testing)",
                         diff.plugin,
@@ -208,12 +211,21 @@ impl StateManager {
                     // ROLLBACK DISABLED FOR TESTING
                     // self.rollback_all(&checkpoints).await?;
                     // return Err(e);
-                    
+
                     // Continue anyway
                     results.push(ApplyResult {
                         success: false,
                         changes_applied: vec![],
                         errors: vec![format!("Failed: {}", e)],
+                        checkpoint: None,
+                    });
+                }
+                None => {
+                    log::error!("Plugin {} not found during apply phase", diff.plugin);
+                    results.push(ApplyResult {
+                        success: false,
+                        changes_applied: vec![],
+                        errors: vec![format!("Plugin not found: {}", diff.plugin)],
                         checkpoint: None,
                     });
                 }
@@ -238,29 +250,6 @@ impl StateManager {
         })
     }
 
-    /// Rollback all plugins to checkpoints
-    async fn rollback_all(&self, checkpoints: &[(String, Checkpoint)]) -> Result<()> {
-        log::error!("========== ROLLBACK TRIGGERED ==========");
-        log::error!("Rolling back {} plugins", checkpoints.len());
-        
-        let plugins = self.plugins.read().await;
-
-        log::warn!("Rolling back {} plugins", checkpoints.len());
-
-        // Rollback in reverse order
-        for (plugin_name, checkpoint) in checkpoints.iter().rev() {
-            if let Some(plugin) = plugins.get(plugin_name) {
-                if let Err(e) = plugin.rollback(checkpoint).await {
-                    log::error!("Failed to rollback plugin {}: {}", plugin_name, e);
-                    // Continue rolling back other plugins
-                }
-
-                // Rollback actions are logged via plugin footprints to streaming blockchain
-            }
-        }
-
-        Ok(())
-    }
 
     /// Show diff between current and desired state
     pub async fn show_diff(&self, desired: DesiredState) -> Result<Vec<StateDiff>> {

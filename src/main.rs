@@ -1,9 +1,8 @@
-#![allow(dead_code, unused_imports)]
+#![allow(unused_imports)]
 //! OVS Port Agent - Main Application
 
 mod command;
 mod error;
-mod networkd_dbus;
 mod plugin_footprint;
 mod streaming_blockchain;
 mod config;
@@ -95,10 +94,7 @@ enum Commands {
     },
 }
 
-/// Convert anyhow::Result to our custom Result type
-fn convert_result<T>(result: anyhow::Result<T>) -> Result<T> {
-    result.map_err(|e| crate::error::Error::Internal(e.to_string()))
-}
+// Note: anyhow::Result now converts automatically to our custom Result via From trait
 
 /// Initialize logging with tracing
 fn init_logging() -> Result<()> {
@@ -143,12 +139,12 @@ async fn main() -> Result<()> {
             // No need for NetworkManager configuration with systemd-networkd
 
             // Initialize FUSE mount base for Proxmox visibility
-            if let Err(err) = convert_result(fuse::ensure_fuse_mount_base()) {
+            if let Err(err) = fuse::ensure_fuse_mount_base() {
                 warn!(error = %err, "Failed to ensure FUSE mount base");
             }
 
             // Clean up any existing mounts (safety cleanup)
-            if let Err(err) = convert_result(fuse::cleanup_all_mounts()) {
+            if let Err(err) = fuse::cleanup_all_mounts() {
                 warn!(error = %err, "Failed to cleanup existing FUSE mounts");
             }
 
@@ -168,9 +164,6 @@ async fn main() -> Result<()> {
                 .await;
             state_manager
                 .register_plugin(Box::new(state::plugins::NetmakerStatePlugin::new()))
-                .await;
-            state_manager
-                .register_plugin(Box::new(state::plugins::DockerStatePlugin::new()))
                 .await;
 
             // Set up streaming blockchain and footprint channel
@@ -204,7 +197,7 @@ async fn main() -> Result<()> {
             );
 
             // Run the RPC service - container interfaces will be created via D-Bus API calls
-            convert_result(rpc::serve_with_state(rpc_state).await)?;
+            rpc::serve_with_state(rpc_state).await?;
             Ok(())
         }
         Commands::Name { container, index } => {
@@ -231,7 +224,7 @@ async fn main() -> Result<()> {
             .with_naming_template(cfg.naming_template().to_string())
             .with_ledger_path(cfg.ledger_path().to_string()); // Ledger path kept for compatibility
 
-            convert_result(netlink::create_container_interface(config).await)?;
+            netlink::create_container_interface(config).await?;
 
             info!(vmid = %vmid, "Container interface created successfully");
             println!("Container interface created successfully for VMID {}", vmid);
@@ -240,16 +233,14 @@ async fn main() -> Result<()> {
         Commands::RemoveInterface { interface_name } => {
             info!(interface_name = %interface_name, "Removing container interface");
 
-            convert_result(
-                netlink::remove_container_interface(
-                    cfg.bridge_name().to_string(),
-                    &interface_name,
-                    cfg.interfaces_path().to_string(),
-                    cfg.managed_block_tag().to_string(),
-                    cfg.ledger_path().to_string(),
-                )
-                .await,
-            )?;
+            netlink::remove_container_interface(
+                cfg.bridge_name().to_string(),
+                &interface_name,
+                cfg.interfaces_path().to_string(),
+                cfg.managed_block_tag().to_string(),
+                cfg.ledger_path().to_string(),
+            )
+            .await?;
 
             info!(interface_name = %interface_name, "Container interface removed successfully");
             println!(
@@ -341,10 +332,8 @@ async fn main() -> Result<()> {
                 .await;
 
             // Load and apply state
-            let desired_state =
-                convert_result(state_manager.load_desired_state(&state_file).await)?;
-
-            let report = convert_result(state_manager.apply_state(desired_state).await)?;
+            let desired_state = state_manager.load_desired_state(&state_file).await?;
+            let report = state_manager.apply_state(desired_state).await?;
 
             println!(
                 "{}",
@@ -381,11 +370,11 @@ async fn main() -> Result<()> {
 
             // Query state
             let state = if let Some(plugin_name) = plugin {
-                convert_result(state_manager.query_plugin_state(&plugin_name).await)?
+                state_manager.query_plugin_state(&plugin_name).await?
             } else {
-                let current = convert_result(state_manager.query_current_state().await)?;
+                let current = state_manager.query_current_state().await?;
                 serde_json::to_value(&current)
-                    .map_err(|e| crate::error::Error::Internal(e.to_string()))?
+                    .map_err(|e| crate::error::Error::Serialization(e))?
             };
 
             println!(
@@ -414,10 +403,8 @@ async fn main() -> Result<()> {
                 .await;
 
             // Load desired state and calculate diff
-            let desired_state =
-                convert_result(state_manager.load_desired_state(&state_file).await)?;
-
-            let diffs = convert_result(state_manager.show_diff(desired_state).await)?;
+            let desired_state = state_manager.load_desired_state(&state_file).await?;
+            let diffs = state_manager.show_diff(desired_state).await?;
 
             println!(
                 "{}",

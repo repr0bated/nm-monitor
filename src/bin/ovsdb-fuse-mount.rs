@@ -36,9 +36,9 @@ fn main() -> Result<()> {
     let fs = OvsdbFuse::new();
     println!("      ✓ Filesystem created");
     
-    println!("[4/6] Initializing sample data...");
-    fs.init_sample_data();
-    println!("      ✓ Sample data loaded");
+    println!("[4/6] Loading real OVSDB data...");
+    fs.load_real_data().expect("Failed to load OVSDB data");
+    println!("      ✓ Real OVSDB data loaded");
     
     println!("[5/6] Preparing mount options...");
     let options = vec![

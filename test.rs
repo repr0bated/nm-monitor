@@ -6,7 +6,7 @@ use anyhow::Result;
 use std::path::PathBuf;
 use tokio::process::Command;
 use clap::{Parser, Subcommand};
-use zbus::{Connection, interface};
+use zbus::{Connection, interface, SignalContext};
 use std::sync::Arc;
 
 const OVSDB_BASE: &str = "/var/lib/openvswitch";
@@ -124,9 +124,10 @@ impl OvsdbWrapper {
 
         let result = if use_snapshot {
             // Use snapshot for ovs-vsctl
+            let ovs_db_env = format!("OVS_DB_DIR={}", snapshot_path);
             Command::new("ovs-vsctl")
                 .args(args)
-                .env("OVS_DB_DIR", &snapshot_path)
+                .env("OVS_DB_DIR", snapshot_path)
                 .output()
                 .await
         } else {
@@ -157,13 +158,13 @@ impl OvsdbWrapper {
     }
 
     /// Execute ovs-vsctl directly (fallback when btrfs snapshots fail)
-    async fn exec_direct(&self, args: &[&str]) -> std::io::Result<std::process::Output> {
+    async fn exec_direct(&self, args: &[&str]) -> Result<std::process::Output> {
         Command::new("ovs-vsctl")
             .args(args)
             .output()
             .await
+            .map_err(|e| e.into())
     }
-}
 
 /// D-Bus interface for OVSDB operations
 #[derive(Clone)]
@@ -252,44 +253,4 @@ impl OvsdbDBusInterface {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-
-    let wrapper = OvsdbWrapper::new();
-
-    match cli.command {
-        Commands::CreateBridge { name } => {
-            eprintln!("[OVSDB] Creating bridge: {}", name);
-            wrapper.exec_via_snapshot(&["--may-exist", "add-br", &name]).await.map(|_| ())
-        }
-        Commands::AddPort { bridge, port } => {
-            eprintln!("[OVSDB] Adding port {} to bridge {}", port, bridge);
-            wrapper.exec_via_snapshot(&["--may-exist", "add-port", &bridge, &port]).await.map(|_| ())
-        }
-        Commands::DeleteBridge { name } => {
-            eprintln!("========================================");
-            eprintln!("[OVSDB] DELETE BRIDGE CALLED: {}", name);
-            eprintln!("[OVSDB] This should NOT happen unless rollback is triggered");
-            eprintln!("========================================");
-            wrapper.exec_via_snapshot(&["--if-exists", "del-br", &name]).await.map(|_| ())
-        }
-        Commands::Service => {
-            eprintln!("=== OVSDB D-Bus Wrapper Service ===");
-            eprintln!("Starting D-Bus service at org.openvswitch.ovsdb...");
-
-            let wrapper = Arc::new(OvsdbWrapper::new());
-            let interface = OvsdbDBusInterface { wrapper };
-
-            let connection = Connection::system().await?;
-            connection.object_server().at("/org/openvswitch/ovsdb", interface).await?;
-            connection.request_name("org.openvswitch.ovsdb").await?;
-
-            eprintln!("D-Bus service started successfully at org.openvswitch.ovsdb");
-            eprintln!("Press Ctrl+C to stop the service");
-
-            // Keep the service running
-            tokio::signal::ctrl_c().await?;
-            eprintln!("D-Bus service stopped");
-            Ok(())
-        }
-    }
 }
-

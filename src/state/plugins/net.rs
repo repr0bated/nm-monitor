@@ -1,6 +1,76 @@
 // Net state plugin - manages core network infrastructure via systemd-networkd
 // Handles: interfaces, bridges, IPs, basic connectivity (set in stone)
 use crate::plugin_footprint::PluginFootprint;
+
+// Temporary: Copy introspection functions here until module visibility is fixed
+mod ovs_introspect {
+    use anyhow::{Context, Result};
+    use serde_json::Value;
+    use std::process::Command;
+
+    /// Return all bridges as JSON array
+    pub fn list_bridges_json() -> Result<Value> {
+        let out = Command::new("ovs-vsctl")
+            .args([
+                "--format=json",
+                "--",
+                "list-br",
+            ])
+            .output()
+            .context("failed to execute ovs-vsctl")?;
+        if !out.status.success() {
+            anyhow::bail!(
+                "ovs-vsctl failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        let v: Value = serde_json::from_slice(&out.stdout).context("parse ovs-vsctl json")?;
+        Ok(v)
+    }
+
+    /// Return read-only OVS Bridge properties as JSON using ovs-vsctl --format=json
+    pub fn bridge_info_json(bridge: &str) -> Result<Value> {
+        let out = Command::new("ovs-vsctl")
+            .args([
+                "--format=json",
+                "--",
+                "list",
+                "Bridge",
+                bridge,
+            ])
+            .output()
+            .context("failed to execute ovs-vsctl")?;
+        if !out.status.success() {
+            anyhow::bail!(
+                "ovs-vsctl failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        let v: Value = serde_json::from_slice(&out.stdout).context("parse ovs-vsctl json")?;
+        Ok(v)
+    }
+
+    /// Return all ports on a bridge as JSON
+    pub fn bridge_ports_json(bridge: &str) -> Result<Value> {
+        let out = Command::new("ovs-vsctl")
+            .args([
+                "--format=json",
+                "--",
+                "list-ports",
+                bridge,
+            ])
+            .output()
+            .context("failed to execute ovs-vsctl")?;
+        if !out.status.success() {
+            anyhow::bail!(
+                "ovs-vsctl failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        let v: Value = serde_json::from_slice(&out.stdout).context("parse ovs-vsctl json")?;
+        Ok(v)
+    }
+}
 use crate::state::plugin::{
     ApplyResult, Checkpoint, PluginCapabilities, StateAction, StateDiff, StatePlugin,
 };
@@ -85,6 +155,7 @@ pub struct AddressConfig {
 /// Net state plugin implementation
 pub struct NetStatePlugin {
     pub config_dir: String,
+    #[allow(dead_code)]
     blockchain_sender: Option<tokio::sync::mpsc::UnboundedSender<PluginFootprint>>,
 }
 
@@ -96,6 +167,7 @@ impl NetStatePlugin {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_blockchain_sender(
         blockchain_sender: tokio::sync::mpsc::UnboundedSender<PluginFootprint>,
     ) -> Self {
@@ -292,31 +364,54 @@ impl NetStatePlugin {
             return Ok(Vec::new());
         }
 
-        let output = AsyncCommand::new("ovs-vsctl")
-            .arg("list-br")
-            .output()
-            .await?;
-
-        if !output.status.success() {
-            return Ok(Vec::new());
-        }
-
-        let bridges_str = String::from_utf8_lossy(&output.stdout);
+        // Use comprehensive OVSDB introspection
         let mut bridges = Vec::new();
 
-        for bridge_name in bridges_str.lines() {
-            let bridge_name = bridge_name.trim();
-            if !bridge_name.is_empty() {
-                bridges.push(InterfaceConfig {
-                    name: bridge_name.to_string(),
-                    if_type: InterfaceType::OvsBridge,
-                    ports: None,
-                    ipv4: None,
-                    ipv6: None,
-                    controller: None,
-                    properties: None,
-                    property_schema: None,
-                });
+        // Get all bridges with full introspection
+        if let Ok(bridge_list) = ovs_introspect::list_bridges_json() {
+            if let Some(bridge_names) = bridge_list.as_array() {
+                for bridge_name_val in bridge_names {
+                    if let Some(bridge_name) = bridge_name_val.as_str() {
+                        // Get complete bridge information
+                        if let Ok(bridge_info) = ovs_introspect::bridge_info_json(bridge_name) {
+                            let mut properties = HashMap::new();
+
+                            // Extract all bridge attributes
+                            if let Some(data) = bridge_info.as_object() {
+                                for (key, value) in data {
+                                    if key != "_uuid" && key != "_version" {
+                                        properties.insert(key.clone(), value.clone());
+                                    }
+                                }
+                            }
+
+                            // Get ports for this bridge
+                            let ports = if let Ok(ports_json) = ovs_introspect::bridge_ports_json(bridge_name) {
+                                if let Some(ports_array) = ports_json.as_array() {
+                                    Some(ports_array.iter()
+                                        .filter_map(|p| p.as_str())
+                                        .map(|s| s.to_string())
+                                        .collect::<Vec<_>>())
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+
+                            bridges.push(InterfaceConfig {
+                                name: bridge_name.to_string(),
+                                if_type: InterfaceType::OvsBridge,
+                                ports,
+                                ipv4: None, // OVS bridges don't have IP config directly
+                                ipv6: None,
+                                controller: None,
+                                properties: Some(properties),
+                                property_schema: Some(vec!["ovsdb".to_string()]),
+                            });
+                        }
+                    }
+                }
             }
         }
 

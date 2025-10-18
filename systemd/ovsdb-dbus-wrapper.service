@@ -7,7 +7,7 @@ Requires=ovsdb-server.service
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/local/bin/ovsdb-dbus-wrapper
+ExecStart=/usr/local/bin/ovsdb-dbus-wrapper service
 Restart=on-failure
 RestartSec=5
 

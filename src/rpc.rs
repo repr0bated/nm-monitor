@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::services::{
-    BlockchainService, BridgeService, NetworkStateService, PortManagementService,
+    PortManagementService,
 };
 use crate::state::manager::StateManager;
 use crate::streaming_blockchain::StreamingBlockchain;
@@ -25,24 +25,15 @@ pub struct AppState {
 pub struct PortAgent {
     state: AppState,
     port_service: PortManagementService,
-    blockchain_service: BlockchainService,
-    bridge_service: BridgeService,
-    network_service: NetworkStateService,
 }
 
 impl PortAgent {
     pub fn new(state: AppState) -> Self {
         let port_service = PortManagementService::new(&state.bridge, &state.ledger_path);
-        let blockchain_service = BlockchainService::new(&state.ledger_path);
-        let bridge_service = BridgeService::new(&state.bridge);
-        let network_service = NetworkStateService::new();
 
         Self {
             state,
             port_service,
-            blockchain_service,
-            bridge_service,
-            network_service,
         }
     }
 }

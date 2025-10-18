@@ -102,7 +102,9 @@ pub struct HealthConfig {
 
 /// Docker state plugin implementation
 pub struct DockerStatePlugin {
+    #[allow(dead_code)]
     docker_socket: String,
+    #[allow(dead_code)]
     blockchain_sender: Option<tokio::sync::mpsc::UnboundedSender<PluginFootprint>>,
 }
 
@@ -131,6 +133,7 @@ impl DockerStatePlugin {
     }
 
     /// Create footprint for Docker operations
+    #[allow(dead_code)]
     fn create_footprint(&self, operation: &str, data: &Value) -> Result<()> {
         if let Some(sender) = &self.blockchain_sender {
             let mut metadata = HashMap::new();
@@ -326,6 +329,7 @@ impl DockerStatePlugin {
     }
 
     /// Filter containers based on configuration
+    #[allow(dead_code)]
     fn filter_containers(&self, containers: Vec<ContainerConfig>, filters: &ContainerFilters) -> Vec<ContainerConfig> {
         containers
             .into_iter()
@@ -378,6 +382,7 @@ impl DockerStatePlugin {
     }
 
     /// Get detailed container information using docker inspect
+    #[allow(dead_code)]
     async fn get_container_details(&self, container_id: &str) -> Result<ContainerConfig> {
         let output = AsyncCommand::new("docker")
             .args(["inspect", container_id, "--format", "json"])
