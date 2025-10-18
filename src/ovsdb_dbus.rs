@@ -72,8 +72,8 @@ network:
     }
 
     /// Check if bridge exists via D-Bus using QueryState
-    pub async fn bridge_exists(&self, bridge_name: &str) -> Result<bool> {
-        let result: String = self.proxy.call("QueryState", &("net",)).await
+    pub async fn bridge_exists(&self, _bridge_name: &str) -> Result<bool> {
+        let _result: String = self.proxy.call("QueryState", &("net",)).await
             .context("Failed to query bridge existence via D-Bus")?;
 
         // Parse the returned JSON/YAML to check if bridge exists

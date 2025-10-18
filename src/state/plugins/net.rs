@@ -178,9 +178,9 @@ impl NetStatePlugin {
             // Parse lines like: "1 lo loopback"
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 3 {
-                if let Ok(idx) = parts[0].parse::<u32>() {
+                if let Ok(_idx) = parts[0].parse::<u32>() {
                     let name = parts[1];
-                    let if_type = parts[2];
+                    let _if_type = parts[2];
 
                     // Skip loopback
                     if name == "lo" {
@@ -199,7 +199,7 @@ impl NetStatePlugin {
 
     /// Query details for a specific interface
     pub async fn query_interface_details(&self, name: &str) -> Result<InterfaceConfig> {
-        let output = AsyncCommand::new("ip")
+        let _output = AsyncCommand::new("ip")
             .args(["addr", "show", name])
             .output()
             .await?;
