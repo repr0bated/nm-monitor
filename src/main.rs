@@ -260,13 +260,13 @@ async fn main() -> Result<()> {
         }
         Commands::List => {
             info!("Listing OVS bridge ports");
-            // Use OVSDB D-Bus to list ports on the bridge
+            // Use OVSDB D-Bus to list ports on the configured bridge
             let client = ovsdb_dbus::OvsdbClient::new().await
                 .map_err(|e| error::Error::Internal(format!("Failed to connect to OVSDB: {}", e)))?;
-            
-            let ports = client.list_ports().await
+
+            let ports = client.list_bridge_ports(cfg.bridge_name()).await
                 .map_err(|e| error::Error::Internal(format!("Failed to list ports: {}", e)))?;
-            
+
             for port in ports {
                 println!("{}", port);
             }
