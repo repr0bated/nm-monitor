@@ -6,16 +6,16 @@
 
 ```bash
 # Option A: Safe test (isolated bridge, no uplink)
-NETWORK_CONFIG=config/examples/test-ovs-simple.yaml
+NETWORK_CONFIG=config/examples/test-ovs-simple.json
 
 # Option B: Single bridge (ovsbr0 only)
-NETWORK_CONFIG=config/examples/network-ovsbr0-only.yaml
+NETWORK_CONFIG=config/examples/network-ovsbr0-only.json
 
 # Option C: Production (ovsbr0 + ovsbr1 with uplink)
-NETWORK_CONFIG=config/examples/network-ovs-bridges.yaml
+NETWORK_CONFIG=config/examples/network-ovs-bridges.json
 
 # Option D: VPS with static IP
-NETWORK_CONFIG=config/examples/network-static-ip.yaml
+NETWORK_CONFIG=config/examples/network-static-ip.json
 ```
 
 ### 2. Install
@@ -54,7 +54,7 @@ That's it! ✅
 ```bash
 # Install with test config (won't affect connectivity)
 sudo ./scripts/install-with-network-plugin.sh \
-  --network-config config/examples/test-ovs-simple.yaml \
+  --network-config config/examples/test-ovs-simple.json \
   --system
 
 # Verify
@@ -69,12 +69,12 @@ sudo ovs-port-agent query-state --plugin network
 ```bash
 # Install just ovsbr0 (for basic setup)
 sudo ./scripts/install-with-network-plugin.sh \
-  --network-config config/examples/network-ovsbr0-only.yaml \
+  --network-config config/examples/network-ovsbr0-only.json \
   --system
 
 # Later, add ovsbr1 if needed
 sudo ./scripts/install-with-network-plugin.sh \
-  --network-config config/examples/network-ovsbr0-only.yaml \
+  --network-config config/examples/network-ovsbr0-only.json \
   --with-ovsbr1 \
   --system
 ```
@@ -87,52 +87,62 @@ sudo ./scripts/install-with-network-plugin.sh \
 
 ```bash
 sudo mkdir -p /etc/ovs-port-agent
-sudo vim /etc/ovs-port-agent/network.yaml
+sudo vim /etc/ovs-port-agent/network.json
 ```
 
-```yaml
-version: 1
-
-network:
-  interfaces:
-    # Primary bridge with your uplink
-    - name: ovsbr0
-      type: ovs-bridge
-      ports:
-        - eth0  # YOUR UPLINK HERE
-      ipv4:
-        enabled: true
-        dhcp: false
-        address:
-          - ip: 198.51.100.10  # YOUR IP
-            prefix: 24
-        gateway: 198.51.100.1  # YOUR GATEWAY
-        dns:
-          - 1.1.1.1
-          - 8.8.8.8
-    
-    # Uplink (enslaved)
-    - name: eth0
-      type: ethernet
-      controller: ovsbr0
-      ipv4:
-        enabled: false
-    
-    # Docker bridge
-    - name: ovsbr1
-      type: ovs-bridge
-      ipv4:
-        enabled: true
-        address:
-          - ip: 172.18.0.1
-            prefix: 16
+```json
+{
+  "version": 1,
+  "network": {
+    "interfaces": [
+      {
+        "name": "ovsbr0",
+        "type": "ovs-bridge",
+        "ports": ["eth0"],
+        "ipv4": {
+          "enabled": true,
+          "dhcp": false,
+          "address": [
+            {
+              "ip": "198.51.100.10",
+              "prefix": 24
+            }
+          ],
+          "gateway": "198.51.100.1",
+          "dns": ["1.1.1.1", "8.8.8.8"]
+        }
+      },
+      {
+        "name": "eth0",
+        "type": "ethernet",
+        "controller": "ovsbr0",
+        "ipv4": {
+          "enabled": false
+        }
+      },
+      {
+        "name": "ovsbr1",
+        "type": "ovs-bridge",
+        "ipv4": {
+          "enabled": true,
+          "address": [
+            {
+              "ip": "172.18.0.1",
+              "prefix": 16
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
 ```
 
 ### 2. Install
 
 ```bash
 sudo ./scripts/install-with-network-plugin.sh \
-  --network-config /etc/ovs-port-agent/network.yaml \
+  --network-config /etc/ovs-port-agent/network.json \
   --system
 ```
 
@@ -145,10 +155,10 @@ sudo ./scripts/install-with-network-plugin.sh \
 sudo ovs-port-agent query-state --plugin network
 
 # Apply new configuration
-sudo ovs-port-agent apply-state /path/to/config.yaml
+sudo ovs-port-agent apply-state /path/to/config.json
 
 # Show what would change (dry run)
-sudo ovs-port-agent show-diff /path/to/config.yaml
+sudo ovs-port-agent show-diff /path/to/config.json
 
 # Check OVS bridges
 sudo ovs-vsctl show
@@ -165,10 +175,10 @@ sudo journalctl -u ovs-port-agent -f
 ## Comparison: New vs Legacy
 
 ### New Way (install-with-network-plugin.sh)
-✅ **Simple** - ~300 lines, easy to understand  
-✅ **Declarative** - YAML config defines desired state  
-✅ **Safe** - Shows diff, asks confirmation  
-✅ **Modern** - Uses network plugin architecture  
+✅ **Simple** - ~300 lines, easy to understand
+✅ **Declarative** - JSON config defines desired state
+✅ **Safe** - Shows diff, asks confirmation
+✅ **Modern** - Uses network plugin architecture
 ✅ **Clean** - No legacy complexity  
 
 ### Legacy Way (install.sh)
@@ -209,7 +219,7 @@ sudo systemctl start openvswitch-switch
 sudo systemctl status openvswitch-switch
 
 # Check your config syntax
-sudo ovs-port-agent show-diff /path/to/config.yaml
+sudo ovs-port-agent show-diff /path/to/config.json
 
 # View detailed errors
 sudo journalctl -xe
@@ -219,7 +229,7 @@ sudo journalctl -xe
 ```bash
 # Use the test config (isolated bridge, no uplink)
 sudo ./scripts/install-with-network-plugin.sh \
-  --network-config config/examples/test-ovs-simple.yaml \
+  --network-config config/examples/test-ovs-simple.json \
   --system
 ```
 
