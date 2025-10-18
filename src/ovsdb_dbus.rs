@@ -10,25 +10,35 @@ pub struct OvsdbClient {
 }
 
 impl OvsdbClient {
-    /// Connect to OVSDB D-Bus wrapper
+    /// Connect to OVSDB D-Bus wrapper (Go Open vSwitch module)
     pub async fn new() -> Result<Self> {
         let conn = Connection::system().await
             .context("Failed to connect to system D-Bus")?;
-        
+
         let proxy = Proxy::new(
             &conn,
-            "org.openvswitch.ovsdb",
-            "/org/openvswitch/ovsdb",
-            "org.openvswitch.ovsdb",
+            "dev.ovs.PortAgent1",
+            "/dev/ovs/PortAgent1",
+            "dev.ovs.PortAgent1",
         ).await.context("Failed to create OVSDB D-Bus proxy")?;
 
         Ok(Self { proxy })
     }
 
-    /// Create OVS bridge via D-Bus
+    /// Create OVS bridge via D-Bus using ApplyState
     pub async fn create_bridge(&self, bridge_name: &str) -> Result<()> {
-        self.proxy.call("CreateBridge", &(bridge_name,)).await
-            .context("Failed to create bridge via D-Bus")
+        let state_yaml = format!(r#"
+network:
+  interfaces:
+    - name: {}
+      type: ovs-bridge
+      ports: []
+      ipv4:
+        enabled: false
+"#, bridge_name);
+
+        self.proxy.call("ApplyState", &(&state_yaml,)).await
+            .context("Failed to create bridge via D-Bus ApplyState")
     }
 
     /// Add port to bridge via D-Bus

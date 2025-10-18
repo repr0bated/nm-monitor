@@ -1,0 +1,213 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Network Configuration Schema",
+  "description": "Schema for nm-monitor network configuration files",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "integer",
+      "description": "Configuration version",
+      "minimum": 1
+    },
+    "network": {
+      "type": "object",
+      "properties": {
+        "interfaces": {
+          "type": "array",
+          "description": "List of network interfaces to configure",
+          "items": {
+            "$ref": "#/definitions/interface"
+          }
+        }
+      },
+      "required": ["interfaces"]
+    },
+    "plugins": {
+      "type": "object",
+      "description": "Plugin-specific configurations",
+      "properties": {
+        "netcfg": {
+          "$ref": "#/definitions/netcfg-plugin"
+        }
+      }
+    },
+    "plugin": {
+      "type": "string",
+      "description": "Plugin type identifier"
+    },
+    "networks": {
+      "type": "object",
+      "description": "Network configuration for plugin",
+      "properties": {
+        "interfaces": {
+          "$ref": "#/definitions/interface"
+        },
+        "netcfg": {
+          "$ref": "#/definitions/netcfg-plugin"
+        }
+      }
+    }
+  },
+  "oneOf": [
+    { "required": ["network"] },
+    { "required": ["plugins"] },
+    { "required": ["plugin", "networks"] }
+  ],
+  "required": ["version"],
+
+  "definitions": {
+    "interface": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Interface name"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["ethernet", "ovs-bridge", "bond", "vlan"],
+          "description": "Interface type"
+        },
+        "controller": {
+          "type": "string",
+          "description": "Controller interface (for enslaved interfaces)"
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Ports enslaved to this bridge"
+        },
+        "ipv4": {
+          "$ref": "#/definitions/ipv4-config"
+        }
+      },
+      "required": ["name", "type"]
+    },
+
+    "ipv4-config": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether IPv4 is enabled"
+        },
+        "dhcp": {
+          "type": "boolean",
+          "description": "Use DHCP for IPv4 configuration"
+        },
+        "address": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ip-address"
+          },
+          "description": "Static IP addresses"
+        }
+      }
+    },
+
+    "ip-address": {
+      "type": "object",
+      "properties": {
+        "ip": {
+          "type": "string",
+          "format": "ipv4",
+          "description": "IP address"
+        },
+        "prefix": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32,
+          "description": "Subnet prefix length"
+        }
+      },
+      "required": ["ip", "prefix"]
+    },
+
+    "netcfg-plugin": {
+      "type": "object",
+      "properties": {
+        "routing": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/route"
+          },
+          "description": "Static routing configuration"
+        },
+        "ovs_flows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ovs-flow"
+          },
+          "description": "OVS flow rules"
+        },
+        "dns": {
+          "$ref": "#/definitions/dns-config"
+        }
+      }
+    },
+
+    "route": {
+      "type": "object",
+      "properties": {
+        "destination": {
+          "type": "string",
+          "description": "Destination network in CIDR notation"
+        },
+        "gateway": {
+          "type": "string",
+          "format": "ipv4",
+          "description": "Gateway IP address"
+        },
+        "interface": {
+          "type": "string",
+          "description": "Interface to use for this route"
+        }
+      },
+      "required": ["destination", "gateway"]
+    },
+
+    "ovs-flow": {
+      "type": "object",
+      "properties": {
+        "bridge": {
+          "type": "string",
+          "description": "Bridge to apply flow rule to"
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "Flow priority"
+        },
+        "match_rule": {
+          "type": "string",
+          "description": "OpenFlow match rule"
+        },
+        "actions": {
+          "type": "string",
+          "description": "OpenFlow actions"
+        }
+      },
+      "required": ["bridge", "priority", "match_rule", "actions"]
+    },
+
+    "dns-config": {
+      "type": "object",
+      "properties": {
+        "hostname": {
+          "type": "string",
+          "description": "System hostname"
+        },
+        "search_domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "DNS search domains"
+        }
+      }
+    }
+  }
+}

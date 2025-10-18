@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "plugin": "network",
+  "networks": {
+    "interfaces": {
+      "name": "ens1",
+      "type": "ethernet",
+      "ports": [],
+      "ipv4": {
+        "enabled": true,
+        "dhcp": true,
+        "address": [],
+        "gateway": null,
+        "dns": []
+      }
+    },
+    "netcfg": {
+      "dns": {
+        "hostname": "castlebox.ghostbridge.tech",
+        "search_domains": [
+          "nm.internal",
+          "."
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "network": {
+    "interfaces": [
+      {
+        "name": "ovsbr0",
+        "type": "ovs-bridge",
+        "ports": [
+          "enp2s0"
+        ],
+        "ipv4": {
+          "enabled": true,
+          "dhcp": true
+        }
+      },
+      {
+        "name": "enp2s0",
+        "type": "ethernet",
+        "controller": "ovsbr0",
+        "ipv4": {
+          "enabled": false
+        }
+      },
+      {
+        "name": "ovsbr1",
+        "type": "ovs-bridge",
+        "ipv4": {
+          "enabled": true,
+          "address": [
+            {
+              "ip": "172.18.0.1",
+              "prefix": 16
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

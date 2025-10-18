@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "plugins": {
+    "netcfg": {
+      "dns": {
+        "hostname": "server1",
+        "search_domains": [
+          "internal.example.com",
+          "example.com"
+        ]
+      }
+    }
+  }
+}
