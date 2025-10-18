@@ -154,7 +154,8 @@ impl NetStatePlugin {
                 }
 
                 // Query detailed interface info
-                if let Ok(iface_config) = self.query_interface_details(name).await {
+                // For JSON output, we don't have interface type, so use ethernet as default
+                if let Ok(iface_config) = self.query_interface_details(name, "ethernet").await {
                     network_interfaces.push(iface_config);
                 }
             }
@@ -180,14 +181,14 @@ impl NetStatePlugin {
             if parts.len() >= 3 {
                 if let Ok(_idx) = parts[0].parse::<u32>() {
                     let name = parts[1];
-                    let _if_type = parts[2];
+                    let if_type_str = parts[2];
 
                     // Skip loopback
                     if name == "lo" {
                         continue;
                     }
 
-                    if let Ok(iface_config) = self.query_interface_details(name).await {
+                    if let Ok(iface_config) = self.query_interface_details(name, if_type_str).await {
                         network_interfaces.push(iface_config);
                     }
                 }
@@ -198,23 +199,91 @@ impl NetStatePlugin {
     }
 
     /// Query details for a specific interface
-    pub async fn query_interface_details(&self, name: &str) -> Result<InterfaceConfig> {
-        let _output = AsyncCommand::new("ip")
+    pub async fn query_interface_details(&self, name: &str, if_type_str: &str) -> Result<InterfaceConfig> {
+        let output = AsyncCommand::new("ip")
             .args(["addr", "show", name])
             .output()
             .await?;
 
-        // Basic interface config - would need more parsing for full details
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        // Parse interface type from networkctl output
+        let if_type = match if_type_str {
+            "loopback" => InterfaceType::Ethernet, // loopback is a type of ethernet
+            "ethernet" => InterfaceType::Ethernet,
+            "bridge" => InterfaceType::Bridge,
+            "ovs-bridge" => InterfaceType::OvsBridge,
+            "ovs-port" => InterfaceType::OvsPort,
+            _ => InterfaceType::Ethernet, // Default fallback
+        };
+
+        // Parse IPv4 configuration from ip addr output
+        let ipv4 = Self::parse_ipv4_config(&stdout);
+
         Ok(InterfaceConfig {
             name: name.to_string(),
-            if_type: InterfaceType::Ethernet, // Default assumption
+            if_type,
             ports: None,
-            ipv4: None,
+            ipv4,
             ipv6: None,
             controller: None,
             properties: None,
             property_schema: None,
         })
+    }
+
+    /// Parse IPv4 configuration from ip addr show output
+    fn parse_ipv4_config(output: &str) -> Option<Ipv4Config> {
+        let mut ipv4_config = Ipv4Config {
+            enabled: false,
+            dhcp: None,
+            address: Some(Vec::new()),
+            gateway: None,
+            dns: Some(Vec::new()),
+        };
+
+        let mut found_ipv4 = false;
+
+        for line in output.lines() {
+            let line = line.trim();
+
+            // Look for inet lines (IPv4 addresses)
+            if line.starts_with("inet ") {
+                found_ipv4 = true;
+                ipv4_config.enabled = true;
+
+                // Parse inet 192.168.1.100/24 brd 192.168.1.255 scope global dynamic ens1
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    let addr_part = parts[1]; // e.g., "192.168.1.100/24"
+                    if let Some((ip, prefix)) = Self::parse_cidr(addr_part) {
+                        if let Some(ref mut addresses) = ipv4_config.address {
+                            addresses.push(AddressConfig {
+                                ip,
+                                prefix: prefix as u8,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        if found_ipv4 {
+            Some(ipv4_config)
+        } else {
+            None
+        }
+    }
+
+    /// Parse CIDR notation like "192.168.1.100/24" into (ip, prefix)
+    fn parse_cidr(cidr: &str) -> Option<(String, u32)> {
+        let parts: Vec<&str> = cidr.split('/').collect();
+        if parts.len() == 2 {
+            if let Ok(prefix) = parts[1].parse::<u32>() {
+                return Some((parts[0].to_string(), prefix));
+            }
+        }
+        None
     }
 
     /// Query OVS bridges directly

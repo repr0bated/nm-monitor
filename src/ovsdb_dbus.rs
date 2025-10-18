@@ -72,13 +72,39 @@ network:
     }
 
     /// Check if bridge exists via D-Bus using QueryState
-    pub async fn bridge_exists(&self, _bridge_name: &str) -> Result<bool> {
-        let _result: String = self.proxy.call("QueryState", &("net",)).await
+    pub async fn bridge_exists(&self, bridge_name: &str) -> Result<bool> {
+        let result: String = self.proxy.call("QueryState", &("net",)).await
             .context("Failed to query bridge existence via D-Bus")?;
 
-        // Parse the returned JSON/YAML to check if bridge exists
-        // For now, assume it exists if no error occurred
-        Ok(true)
+        // Parse the returned JSON to check if bridge exists
+        let state: serde_json::Value = serde_json::from_str(&result)
+            .context("Failed to parse network state JSON")?;
+
+        // Check if the network state contains interfaces
+        if let Some(network) = state.get("network") {
+            if let Some(interfaces) = network.get("interfaces") {
+                if let Some(interfaces_array) = interfaces.as_array() {
+                    // Look for the bridge by name
+                    for interface in interfaces_array {
+                        if let Some(name) = interface.get("name") {
+                            if let Some(name_str) = name.as_str() {
+                                if name_str == bridge_name {
+                                    // Check if it's actually an OVS bridge
+                                    if let Some(if_type) = interface.get("type") {
+                                        if let Some(type_str) = if_type.as_str() {
+                                            return Ok(type_str == "ovs-bridge");
+                                        }
+                                    }
+                                    return Ok(true); // Found interface with matching name
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(false) // Bridge not found
     }
 
     /// List all ports via D-Bus
