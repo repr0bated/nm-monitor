@@ -264,7 +264,7 @@ async fn main() -> Result<()> {
             let client = ovsdb_dbus::OvsdbClient::new().await
                 .map_err(|e| error::Error::Internal(format!("Failed to connect to OVSDB: {}", e)))?;
             
-            let ports = client.list_bridge_ports(cfg.bridge_name()).await
+            let ports = client.list_ports().await
                 .map_err(|e| error::Error::Internal(format!("Failed to list ports: {}", e)))?;
             
             for port in ports {

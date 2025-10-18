@@ -28,7 +28,7 @@ impl PortManagementService {
         let client = OvsdbClient::new().await
             .context("Failed to connect to OVSDB")?;
         
-        client.list_bridge_ports(&self.bridge).await
+        client.list_ports().await
             .context("Failed to list bridge ports via OVSDB D-Bus")
     }
 
