@@ -1,0 +1,18 @@
+# Test Configuration: Simple OVS Bridge
+# This creates a single OVS bridge with no uplink (isolated bridge)
+# Perfect for testing without disrupting network connectivity
+
+version: 1
+
+network:
+  interfaces:
+    # Simple isolated OVS bridge for testing
+    - name: ovsbr-test
+      type: ovs-bridge
+      ipv4:
+        enabled: true
+        dhcp: false
+        address:
+          - ip: 10.99.99.1
+            prefix: 24
+

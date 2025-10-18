@@ -1,106 +1,110 @@
-use anyhow::Result;
-use log::info;
+//! D-Bus RPC interface - thin layer that delegates to service implementations
+
+use anyhow::{Context, Result};
 use std::future;
-use zbus::{fdo::IntrospectableProxy, ConnectionBuilder};
+use std::sync::Arc;
+use tracing::{debug, info};
 
-// use crate::ledger::Ledger; // reserved for future action logging via DBus
-use crate::nm_query;
-// use std::path::PathBuf; // reserved for future file parameterization
+use crate::services::{
+    PortManagementService,
+};
+use crate::state::manager::StateManager;
+use crate::streaming_blockchain::StreamingBlockchain;
+use crate::plugin_footprint::PluginFootprint;
 
+/// Application state shared across D-Bus methods
 pub struct AppState {
     pub bridge: String,
     pub ledger_path: String,
+    pub state_manager: Option<Arc<StateManager>>,
+    pub streaming_blockchain: Arc<StreamingBlockchain>,
+    pub footprint_sender: tokio::sync::mpsc::UnboundedSender<PluginFootprint>,
 }
+
+/// D-Bus interface implementation
 pub struct PortAgent {
     state: AppState,
+    port_service: PortManagementService,
 }
 
 impl PortAgent {
     pub fn new(state: AppState) -> Self {
-        Self { state }
+        let port_service = PortManagementService::new(&state.bridge, &state.ledger_path);
+
+        Self {
+            state,
+            port_service,
+        }
     }
 }
 
-#[zbus::dbus_interface(name = "dev.ovs.PortAgent1")]
+#[zbus::interface(name = "dev.ovs.PortAgent1")]
 impl PortAgent {
     fn ping(&self) -> String {
         "pong".into()
     }
 
-    fn list_ports(&self) -> zbus::fdo::Result<Vec<String>> {
-        nm_query::list_connection_names()
-            .map(|v| {
-                v.into_iter()
-                    .filter(|n| n.starts_with("ovs-eth-"))
-                    .map(|n| n.trim_start_matches("ovs-eth-").to_string())
-                    .collect()
-            })
-            .map_err(|e| zbus::fdo::Error::Failed(format!("{}", e)))
+    async fn list_ports(&self) -> zbus::fdo::Result<Vec<String>> {
+        debug!("D-Bus call: list_ports");
+        self.port_service
+            .list_ports()
+            .await
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Failed to list ports: {}", e)))
     }
 
-    fn add_port(&self, name: &str) -> zbus::fdo::Result<String> {
-        let interfaces_path = "/etc/network/interfaces".to_string();
-        let managed_tag = "ovs-port-agent".to_string();
-        let enable_rename = true;
-        let naming_template = "vi{container}".to_string();
-        let vmid: u32 = 0;
-
-        let bridge = self.state.bridge.clone();
-        let ledger_path = self.state.ledger_path.clone();
-
-        tokio::runtime::Handle::current()
-            .block_on(async {
-                crate::netlink::create_container_interface(
-                    bridge,
-                    name,
-                    name,
-                    vmid,
-                    interfaces_path,
-                    managed_tag,
-                    enable_rename,
-                    naming_template,
-                    ledger_path,
-                )
-                .await
-            })
-            .map_err(|e| {
-                zbus::fdo::Error::Failed(format!("Failed to create container interface: {}", e))
-            })?;
-
-        Ok(format!("Container interface created for {}", name))
+    async fn apply_state(&self, state_json: &str) -> zbus::fdo::Result<String> {
+        debug!("D-Bus call: apply_state");
+        if let Some(ref state_manager) = self.state.state_manager {
+            match serde_json::from_str(state_json) {
+                Ok(desired_state) => {
+                    match state_manager.apply_state(desired_state).await {
+                        Ok(report) => Ok(serde_json::to_string(&report).unwrap_or_default()),
+                        Err(e) => Err(zbus::fdo::Error::Failed(format!("Apply state failed: {}", e)))
+                    }
+                }
+                Err(e) => Err(zbus::fdo::Error::InvalidArgs(format!("Invalid JSON: {}", e)))
+            }
+        } else {
+            Err(zbus::fdo::Error::Failed("State manager not available".into()))
+        }
     }
 
-    fn del_port(&self, name: &str) -> zbus::fdo::Result<String> {
-        let interfaces_path = "/etc/network/interfaces".to_string();
-        let managed_tag = "ovs-port-agent".to_string();
-        let bridge = self.state.bridge.clone();
-        let ledger_path = self.state.ledger_path.clone();
-
-        tokio::runtime::Handle::current()
-            .block_on(async {
-                crate::netlink::remove_container_interface(
-                    bridge,
-                    name,
-                    interfaces_path,
-                    managed_tag,
-                    ledger_path,
-                )
-                .await
-            })
-            .map_err(|e| {
-                zbus::fdo::Error::Failed(format!("Failed to remove container interface: {}", e))
-            })?;
-
-        Ok(format!("Container interface {} removed", name))
+    async fn query_state(&self, plugin: &str) -> zbus::fdo::Result<String> {
+        debug!("D-Bus call: query_state for plugin: {}", plugin);
+        if let Some(ref state_manager) = self.state.state_manager {
+            match state_manager.query_plugin_state(plugin).await {
+                Ok(state) => Ok(serde_json::to_string(&state).unwrap_or_default()),
+                Err(e) => Err(zbus::fdo::Error::Failed(format!("Query failed: {}", e)))
+            }
+        } else {
+            Err(zbus::fdo::Error::Failed("State manager not available".into()))
+        }
     }
 
-    fn introspect_network_manager(&self) -> zbus::fdo::Result<String> {
-        match tokio::runtime::Handle::current().block_on(async { introspect_nm().await }) {
-            Ok(_) => Ok("NetworkManager introspection completed successfully".to_string()),
-            Err(e) => Err(zbus::fdo::Error::Failed(format!(
-                "NetworkManager introspection failed: {}",
-                e
-            ))),
+    async fn add_blockchain_event(&self, category: &str, action: &str, data: &str) -> zbus::fdo::Result<String> {
+        debug!("D-Bus call: add_blockchain_event - {}/{}", category, action);
+        match serde_json::from_str(data) {
+            Ok(event_data) => {
+                let footprint = crate::plugin_footprint::PluginFootprint::new(
+                    category.to_string(),
+                    action.to_string(),
+                    event_data,
+                );
+                if let Err(e) = self.state.footprint_sender.send(footprint) {
+                    Err(zbus::fdo::Error::Failed(format!("Failed to send footprint: {}", e)))
+                } else {
+                    Ok("Event added to blockchain".into())
+                }
+            }
+            Err(e) => Err(zbus::fdo::Error::InvalidArgs(format!("Invalid JSON data: {}", e)))
+        }
+    }
+
+    async fn stream_vectors(&self, block_hash: &str, remote: &str) -> zbus::fdo::Result<String> {
+        debug!("D-Bus call: stream_vectors - {} to {}", block_hash, remote);
+        match self.state.streaming_blockchain.stream_vectors(block_hash, remote).await {
+            Ok(_) => Ok("Vectors streamed successfully".into()),
+            Err(e) => Err(zbus::fdo::Error::Failed(format!("Stream failed: {}", e)))
         }
     }
 }
@@ -109,47 +113,18 @@ pub async fn serve_with_state(state: AppState) -> Result<()> {
     let agent = PortAgent::new(state);
     let name = "dev.ovs.PortAgent1";
     let path = "/dev/ovs/PortAgent1";
-    let _conn = ConnectionBuilder::system()?
-        .name(name)?
-        .serve_at(path, agent)?
+
+    let _conn = zbus::connection::Builder::system()
+        .context("Failed to connect to system bus")?
+        .name(name)
+        .with_context(|| format!("Failed to request D-Bus name '{}'", name))?
+        .serve_at(path, agent)
+        .with_context(|| format!("Failed to serve agent at path '{}'", path))?
         .build()
-        .await?;
+        .await
+        .context("Failed to build D-Bus connection")?;
+
     info!("D-Bus service registered: {} at {}", name, path);
     future::pending::<()>().await;
     Ok(())
-}
-
-pub async fn introspect_nm() -> Result<()> {
-    info!("Performing comprehensive D-Bus introspection on NetworkManager");
-    let conn = zbus::Connection::system().await?;
-    introspect_object(
-        &conn,
-        "org.freedesktop.NetworkManager",
-        "/org/freedesktop/NetworkManager",
-    )
-    .await?;
-    Ok(())
-}
-
-async fn introspect_object(
-    conn: &zbus::Connection,
-    destination: &str,
-    path: &str,
-) -> Result<String> {
-    match IntrospectableProxy::builder(conn)
-        .destination(destination)?
-        .path(path)?
-        .build()
-        .await
-    {
-        Ok(proxy) => match proxy.introspect().await {
-            Ok(xml) => Ok(xml),
-            Err(e) => Err(anyhow::anyhow!("Failed to introspect {}: {}", path, e)),
-        },
-        Err(e) => Err(anyhow::anyhow!(
-            "Failed to create proxy for {}: {}",
-            path,
-            e
-        )),
-    }
 }

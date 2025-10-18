@@ -1,0 +1,33 @@
+version: 1
+
+plugins:
+  net:
+    interfaces:
+      # OVS Bridge (no IP - just the bridge)
+      - name: vmbr0
+        type: ovs-bridge
+        ports:
+          - ens1
+          - vmbr0-if
+      
+      # OVS Interface (gets the IP - systemd-networkd style)
+      - name: vmbr0-if
+        type: ethernet  # Use ethernet type for OVS interface
+        controller: vmbr0
+        ipv4:
+          enabled: true
+          dhcp: false
+          address:
+            - ip: 80.209.240.244
+              prefix: 25
+          gateway: 80.209.240.129
+          dns:
+            - 8.8.8.8
+            - 8.8.4.4
+      
+      # Physical uplink (enslaved to bridge)
+      - name: ens1
+        type: ethernet
+        controller: vmbr0
+        ipv4:
+          enabled: false  # IP moved to OVS interface

@@ -3,11 +3,37 @@ name = "ovs-port-agent"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "ovs_port_agent"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ovs-port-agent"
+path = "src/main.rs"
+
+[[bin]]
+name = "ovsdb-dbus-wrapper"
+path = "src/bin/ovsdb-dbus-wrapper.rs"
+
+[[bin]]
+name = "ovsdb-fuse-mount"
+path = "src/bin/ovsdb-fuse-mount.rs"
+
+[[bin]]
+name = "system-introspection"
+path = "src/bin/system-introspection.rs"
+
+[[bin]]
+name = "demo-without-ledger"
+path = "demo_without_ledger.rs"
+
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "signal"] }
+libc = "0.2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "signal", "fs"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.8"
+async-trait = "0.1"
+md5 = "0.7"
 thiserror = "1"
 anyhow = "1"
 log = "0.4"
@@ -19,10 +45,16 @@ regex = "1"
 which = "6"
 once_cell = "1"
 clap = { version = "4", features = ["derive"] }
-zbus = { version = "3", features = ["tokio"] }
+zbus = { version = "4", features = ["tokio"] }
 sha2 = "0.10"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 rtnetlink = { version = "0.14", features = ["tokio_socket"] }
 futures = "0.3"
 futures-util = "0.3"
 tempfile = "3.0"
+hostname = "0.3"
+validator = { version = "0.20.0", features = ["derive"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+gethostname = "0.4"
+fuser = "0.14"

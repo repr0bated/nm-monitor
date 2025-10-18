@@ -1,0 +1,11 @@
+/git/nm-monitor/target/debug/deps/crossbeam_utils-0fb2a857f3417074.d: /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-utils-0.8.21/src/lib.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-utils-0.8.21/src/atomic/mod.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-utils-0.8.21/src/atomic/seq_lock.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-utils-0.8.21/src/atomic/atomic_cell.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-utils-0.8.21/src/atomic/consume.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-utils-0.8.21/src/cache_padded.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-utils-0.8.21/src/backoff.rs
+
+/git/nm-monitor/target/debug/deps/libcrossbeam_utils-0fb2a857f3417074.rmeta: /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-utils-0.8.21/src/lib.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-utils-0.8.21/src/atomic/mod.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-utils-0.8.21/src/atomic/seq_lock.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-utils-0.8.21/src/atomic/atomic_cell.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-utils-0.8.21/src/atomic/consume.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-utils-0.8.21/src/cache_padded.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-utils-0.8.21/src/backoff.rs
+
+/opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-utils-0.8.21/src/lib.rs:
+/opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-utils-0.8.21/src/atomic/mod.rs:
+/opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-utils-0.8.21/src/atomic/seq_lock.rs:
+/opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-utils-0.8.21/src/atomic/atomic_cell.rs:
+/opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-utils-0.8.21/src/atomic/consume.rs:
+/opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-utils-0.8.21/src/cache_padded.rs:
+/opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-utils-0.8.21/src/backoff.rs:

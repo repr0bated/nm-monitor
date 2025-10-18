@@ -1,0 +1,14 @@
+# Cursor Rules for nm-monitor project
+
+# AI Model Configuration for Amazon Q/CodeWhisperer
+# Note: This file configures coding rules, not AI models
+# For AI model configuration, use Cursor Settings > AI > Models
+
+rules:
+  - "Use Rust best practices for all code"
+  - "Follow async/await patterns for tokio"
+  - "Use proper error handling with thiserror"
+  - "Document public APIs with rustdoc"
+  - "Use serde for serialization where needed"
+  - "Prefer functional programming patterns where appropriate"
+  - "Keep functions small and focused on single responsibilities"

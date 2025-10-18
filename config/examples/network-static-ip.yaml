@@ -1,0 +1,40 @@
+# Example: Static IP Configuration for VPS
+# Apply with: ovs-port-agent apply-state config/examples/network-static-ip.yaml
+
+version: 1
+
+network:
+  interfaces:
+    # Primary OVS bridge with static IP
+    - name: ovsbr0
+      type: ovs-bridge
+      ports:
+        - eth0  # Physical uplink
+      ipv4:
+        enabled: true
+        dhcp: false
+        address:
+          - ip: 192.168.1.10
+            prefix: 24
+        gateway: 192.168.1.1
+        dns:
+          - 1.1.1.1
+          - 8.8.8.8
+    
+    # Physical uplink (enslaved to bridge)
+    - name: eth0
+      type: ethernet
+      controller: ovsbr0
+      ipv4:
+        enabled: false
+    
+    # Docker bridge
+    - name: ovsbr1
+      type: ovs-bridge
+      ipv4:
+        enabled: true
+        dhcp: false
+        address:
+          - ip: 172.18.0.1
+            prefix: 16
+

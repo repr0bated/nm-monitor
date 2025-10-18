@@ -1,0 +1,14 @@
+# Local development test - no OVS required
+version: 1
+
+plugins:
+  netcfg:
+    dns:
+      hostname: dev-test
+      search_domains:
+        - local
+        - example.com
+    routing:
+      - destination: "192.168.1.0/24"
+        gateway: "192.168.1.1"
+        interface: "eth0"

@@ -1,0 +1,9 @@
+[Match]
+Name=ens1
+
+[Network]
+DHCP=no
+
+[OVS-Port]
+VLANMode=trunk
+Trunk=

@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "plugins": {
+    "net": {
+      "interfaces": [
+        {
+          "name": "ovsbr0",
+          "type": "ovs-bridge",
+          "ports": [
+            "wlo1"
+          ],
+          "ipv4": {
+            "enabled": true,
+            "dhcp": false,
+            "address": [
+              {
+                "ip": "172.16.0.130",
+                "prefix": 24
+              }
+            ],
+            "gateway": "172.16.0.254",
+            "dns": [
+              "8.8.8.8",
+              "8.8.4.4"
+            ]
+          }
+        },
+        {
+          "name": "ovsbr1",
+          "type": "ovs-bridge",
+          "ipv4": {
+            "enabled": true,
+            "dhcp": false,
+            "address": [
+              {
+                "ip": "10.0.100.1",
+                "prefix": 24
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "netcfg": {
+      "routing": [
+        {
+          "destination": "10.0.0.0/8",
+          "gateway": "172.16.0.1",
+          "interface": "ovsbr0"
+        }
+      ],
+      "ovs_flows": [
+        {
+          "bridge": "ovsbr0",
+          "priority": 200,
+          "match_rule": "ip,nw_dst=10.0.0.0/8",
+          "actions": "normal"
+        }
+      ],
+      "dns": {
+        "hostname": "netmaker-server",
+        "search_domains": [
+          "vpn.internal"
+        ]
+      }
+    }
+  }
+}

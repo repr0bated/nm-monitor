@@ -1,7 +1,7 @@
 # ovs-port-agent configuration
 
 # Name of the Open vSwitch bridge to manage
-bridge_name = "ovsbr0"
+bridge_name = "vmbr0"
 
 # Interfaces file to update for Proxmox visibility
 interfaces_path = "/etc/network/interfaces"
@@ -16,7 +16,7 @@ debounce_ms = 500
 managed_block_tag = "ovs-port-agent"
 
 # Naming template: variables {container}, {index}
-naming_template = "vi{container}"
+naming_template = "vi_{container}"
 
 # Enable renaming by default
 enable_rename = true

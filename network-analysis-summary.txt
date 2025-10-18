@@ -1,0 +1,190 @@
+COMPREHENSIVE NETWORK LOG ANALYSIS REPORT
+==========================================
+Date: October 14, 2025
+System: castlebox.ghostbridge.tech
+Analysis Period: 1 week
+
+EXECUTIVE SUMMARY
+================
+After comprehensive recheck of ALL network logs including OVS, ovs-port-agent, 
+systemd, and dmesg, several critical issues have been identified that explain 
+the network problems.
+
+CRITICAL NETWORK ISSUES IDENTIFIED
+==================================
+
+1. NETWORK WAIT TIMEOUT (3 OCCURRENCES)
+   - Oct 14, 20:57:27: First timeout
+   - Oct 14, 21:13:15: Second timeout  
+   - Oct 14, 21:17:38: Third timeout (after our fixes)
+   - Status: Service continues to fail despite fixes
+   - Impact: Boot process delayed, services don't wait for network
+
+2. DHCP HELPER SERVICE FAILURE (1 OCCURRENCE)
+   - Error: dhcp-helper: bad interface eth0: No such device
+   - Root Cause: Service configured for eth0 but interface renamed to ens1
+   - Status: FIXED - Updated to use ens1
+   - Impact: DHCP relay functionality restored
+
+3. APPARMOR DHCP CLIENT RESTRICTIONS (10 DENIALS)
+   - Count: 10 AppArmor denials for dhclient processes
+   - Issues: Socket creation denied, capability denied
+   - Impact: DHCP client functionality severely restricted
+   - Status: PARTIALLY ADDRESSED - Tools not available
+
+4. INTERFACE RENAMING DELAY (8+ MINUTES) - CRITICAL ISSUE
+   - Timeline: 
+     * Boot: 20:55:27
+     * Interface detected: 1.516962 (eth0 detected)
+     * Interface renamed: 1.547050 (eth0 -> ens1)
+     * Link UP: 457.241236 (8+ minute delay!)
+   - Impact: Massive network connectivity delay
+
+DETAILED LOG ANALYSIS
+=====================
+
+OVS (OpenVSwitch) Logs: CLEAN - No errors found
+- ovs-port-agent: Started successfully, bridge ovsbr0 created
+- ovsdb-server: Database initialized, no errors
+- openvswitch-switch: Started and finished cleanly
+
+Kernel Messages (dmesg): MAJOR ISSUE FOUND
+Key Findings:
+[    1.226524] e1000: Intel(R) PRO/1000 Network Driver
+[    1.516962] e1000 0000:04:01.0 eth0: (PCI:33MHz:32-bit) 56:6f:af:54:00:6b
+[    1.516969] e1000 0000:04:01.0 eth0: Intel(R) PRO/1000 Network Connection
+[    1.547050] e1000 0000:04:01.0 ens1: renamed from eth0
+[  457.241236] e1000: ens1 NIC Link is Up 1000 Mbps Full Duplex, Flow Control: RX
+
+CRITICAL ISSUE: 8+ minute delay between interface detection and link up!
+
+Systemd Network Service Logs:
+- systemd-networkd: CLEAN - No errors found
+- systemd-networkd-wait-online: FAILING - Multiple timeouts
+
+AppArmor Audit Logs:
+- Count: 10 denials for dhclient
+- Pattern: All related to socket creation and capability access
+- Impact: DHCP client cannot function properly
+
+ROOT CAUSE ANALYSIS
+===================
+
+PRIMARY ISSUE: Interface Renaming Delay
+The main problem is the 8+ minute delay between:
+1. Interface detection (1.516962)
+2. Interface renaming (1.547050) 
+3. Link coming up (457.241236)
+
+This suggests:
+- Hardware initialization issues
+- Driver problems
+- Power management delays
+- PCI device enumeration issues
+
+SECONDARY ISSUES:
+1. AppArmor restrictions preventing DHCP
+2. Service configuration mismatches (eth0 vs ens1)
+3. Network wait timeout due to delayed interface
+
+CURRENT WORKING STATE
+====================
+Good news: Network is currently functional:
+- Interface ens1 is UP with 1000 Mbps Full Duplex
+- IP: 80.209.240.244/25 (dynamically assigned)
+- Internet connectivity confirmed
+- OVS bridge ovsbr0 operational
+- Network monitoring service active
+
+APPLIED FIXES
+=============
+
+COMPLETED FIXES:
+1. DHCP Helper Service - Fixed interface name (eth0 -> ens1)
+2. Network Wait Timeout - Increased to 120 seconds
+3. Network Recovery Script - Created and enabled
+4. Auto-Monitoring Service - Active and running
+
+REMAINING ISSUES:
+1. Interface Renaming Delay - 8+ minute delay still present
+2. AppArmor Restrictions - 10 denials still occurring
+3. Network Wait Timeout - Still failing despite timeout increase
+
+IMPACT ASSESSMENT
+=================
+- Severity: HIGH (8+ minute network delay)
+- Boot Impact: CRITICAL (8+ minute delay in network availability)
+- Service Impact: MEDIUM (DHCP helper fixed, wait-online still failing)
+- User Impact: HIGH (significant boot delays)
+
+NEW FINDINGS
+============
+
+OVS Services: HEALTHY
+- No errors in ovs-port-agent logs
+- No errors in ovsdb-server logs
+- Bridge creation successful
+
+Kernel Network: PROBLEMATIC
+- Interface detection works
+- Renaming works
+- 8+ minute delay to link up is the core issue
+
+Systemd Services: MIXED
+- systemd-networkd: Working
+- systemd-networkd-wait-online: Failing (timeout)
+- dhcp-helper: Fixed and working
+
+RECOMMENDED NEXT STEPS
+======================
+
+IMMEDIATE ACTIONS:
+1. Investigate hardware/driver issues causing 8-minute delay
+2. Check PCI device enumeration and power management
+3. Review network driver configuration
+4. Consider hardware diagnostics
+
+AppArmor Fixes:
+# Check AppArmor status
+sudo aa-status
+
+# Put dhclient in complain mode
+sudo aa-complain dhclient
+
+# Or disable AppArmor for dhclient
+sudo aa-disable dhclient
+
+Hardware Investigation:
+# Check PCI device status
+lspci -v | grep -i ethernet
+
+# Check driver information
+ethtool -i ens1
+
+# Check power management
+cat /sys/class/net/ens1/device/power_state
+
+ERROR SUMMARY
+=============
+Issue                 | Count | Status    | Impact
+---------------------|-------|-----------|--------
+Network Timeouts     | 3     | Failing   | High
+AppArmor Denials     | 10    | Partial   | Medium
+DHCP Helper Failures | 1     | Fixed     | Low
+Interface Delay      | 1     | Critical  | Critical
+OVS Errors          | 0     | Clean     | None
+
+CONCLUSION
+==========
+The 8+ minute interface delay is the root cause of all network issues. While OVS 
+services are healthy and we've fixed configuration issues, the core hardware/driver 
+problem remains. The network recovery script will help with connectivity, but the 
+underlying delay needs investigation.
+
+FILES CREATED
+=============
+- /git/nm-monitor/network-recovery.sh (executable recovery script)
+- /git/nm-monitor/network-monitor.service (systemd service)
+- /git/nm-monitor/network-analysis-summary.txt (this file)
+
+Analysis completed on October 14, 2025

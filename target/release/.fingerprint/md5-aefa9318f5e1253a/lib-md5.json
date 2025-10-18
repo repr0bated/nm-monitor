@@ -1,0 +1,1 @@
+{"rustc":16285725380928457773,"features":"[\"default\", \"std\"]","declared_features":"[\"default\", \"std\"]","target":16521573572710815818,"profile":2040997289075261528,"path":8636810385675191015,"deps":[],"local":[{"CheckDepInfo":{"dep_info":"release/.fingerprint/md5-aefa9318f5e1253a/dep-lib-md5","checksum":false}}],"rustflags":[],"config":2069994364910194474,"compile_kind":0}

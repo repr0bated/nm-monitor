@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "plugins": {
+    "net": {
+      "interfaces": [
+        {
+          "name": "eth0",
+          "type": "ethernet",
+          "ipv4": {
+            "enabled": true,
+            "dhcp": true
+          },
+          "properties": {
+            "mac_address": "aa:bb:cc:dd:ee:ff",
+            "mtu": 1500,
+            "speed": 1000,
+            "duplex": "full",
+            "txqueuelen": 1000,
+            "operstate": "up",
+            "datacenter": "dc1",
+            "rack": "A3",
+            "vendor": "Intel",
+            "notes": "Primary uplink - do not modify",
+            "contact_email": "netops@example.com"
+          },
+          "property_schema": [
+            "mac_address",
+            "mtu",
+            "speed",
+            "duplex",
+            "txqueuelen",
+            "operstate",
+            "datacenter",
+            "rack",
+            "vendor",
+            "notes",
+            "contact_email"
+          ]
+        }
+      ]
+    }
+  }
+}

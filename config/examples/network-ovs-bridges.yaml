@@ -1,0 +1,32 @@
+# Example: Declarative OVS Bridge Configuration for systemd-networkd
+# Apply with: ovs-port-agent apply-state config/examples/network-ovs-bridges.yaml
+
+version: 1
+
+network:
+  interfaces:
+    # Primary OVS bridge with uplink
+    - name: ovsbr0
+      type: ovs-bridge
+      ports:
+        - enp2s0  # Physical uplink interface
+      ipv4:
+        enabled: true
+        dhcp: true
+    
+    # Physical uplink (enslaved to bridge)
+    - name: enp2s0
+      type: ethernet
+      controller: ovsbr0  # Enslaved to bridge
+      ipv4:
+        enabled: false  # No IP on enslaved interface
+    
+    # Secondary isolated bridge for Docker/containers
+    - name: ovsbr1
+      type: ovs-bridge
+      ipv4:
+        enabled: true
+        address:
+          - ip: 172.18.0.1
+            prefix: 16
+

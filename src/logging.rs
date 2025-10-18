@@ -1,5 +1,6 @@
 use log::LevelFilter;
 
+#[allow(dead_code)]
 pub fn init_logging() {
     #[allow(clippy::bind_instead_of_map)]
     if systemd_journal_logger::JournalLog::new()

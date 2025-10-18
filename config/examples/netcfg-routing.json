@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "plugins": {
+    "netcfg": {
+      "routing": [
+        {
+          "destination": "10.0.0.0/8",
+          "gateway": "172.16.0.1",
+          "interface": "ovsbr0"
+        },
+        {
+          "destination": "192.168.100.0/24",
+          "gateway": "172.16.0.254",
+          "interface": "ovsbr0",
+          "metric": 100
+        }
+      ]
+    }
+  }
+}

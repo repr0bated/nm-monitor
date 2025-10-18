@@ -1,0 +1,30 @@
+# Auto-generated network configuration
+# Created: Mon Oct 13 04:27:00 AM EDT 2025
+# Source: enxe04f43a07fce (172.16.0.98/24)
+
+version: "1.0"
+
+plugins:
+  net:
+    interfaces:
+      # OVS bridge with uplink from enxe04f43a07fce
+      - name: vmbr0
+        type: ovs-bridge
+        ports:
+          - enxe04f43a07fce
+        ipv4:
+          enabled: true
+          dhcp: false
+          address:
+            - ip: 172.16.0.98
+              prefix: 24
+          gateway: 172.16.0.1
+          dns:
+            - 172.16.0.1
+      
+      # Physical uplink (enslaved to bridge)
+      - name: enxe04f43a07fce
+        type: ethernet
+        controller: vmbr0
+        ipv4:
+          enabled: false  # IP moves to bridge

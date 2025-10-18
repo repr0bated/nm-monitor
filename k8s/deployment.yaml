@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ovs-port-agent
+  labels:
+    app: ovs-port-agent
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ovs-port-agent
+  template:
+    metadata:
+      labels:
+        app: ovs-port-agent
+    spec:
+      hostNetwork: true  # Required for network management
+      hostPID: true      # Required for systemd integration
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+      volumes:
+      - name: systemd
+        hostPath:
+          path: /run/systemd
+      - name: dbus
+        hostPath:
+          path: /var/run/dbus
+      - name: ovs
+        hostPath:
+          path: /var/lib/openvswitch
+      - name: systemd-system
+        hostPath:
+          path: /etc/systemd/system
+      - name: cgroup
+        hostPath:
+          path: /sys/fs/cgroup
+      containers:
+      - name: ovs-port-agent
+        image: ovs-port-agent:latest
+        imagePullPolicy: Always
+        securityContext:
+          capabilities:
+            add: ["CAP_NET_ADMIN", "CAP_SYS_ADMIN"]
+        volumeMounts:
+        - name: systemd
+          mountPath: /run/systemd
+        - name: dbus
+          mountPath: /var/run/dbus
+        - name: ovs
+          mountPath: /var/lib/openvswitch
+        - name: systemd-system
+          mountPath: /etc/systemd/system
+          readOnly: true
+        - name: cgroup
+          mountPath: /sys/fs/cgroup
+          readOnly: true
+        env:
+        - name: RUST_LOG
+          value: "info"
+        - name: CONFIG_PATH
+          value: "/etc/ovs-port-agent/config.toml"
+        ports:
+        - containerPort: 8080
+          name: metrics
+        livenessProbe:
+          exec:
+            command:
+            - /usr/local/bin/ovs-port-agent
+            - --help
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          exec:
+            command:
+            - /usr/local/bin/ovs-port-agent
+            - --help
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovs-port-agent-service
+  labels:
+    app: ovs-port-agent
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: metrics
+  selector:
+    app: ovs-port-agent

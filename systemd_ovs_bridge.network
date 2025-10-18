@@ -1,0 +1,12 @@
+[Match]
+Name=vmbr0
+
+[Network]
+DHCP=no
+Address=80.209.240.244/25
+Gateway=80.209.240.129
+DNS=8.8.8.8
+DNS=8.8.4.4
+
+[OVS-Bridge]
+AllowRemotePackets=yes

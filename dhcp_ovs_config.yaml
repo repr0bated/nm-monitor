@@ -1,0 +1,8 @@
+version: 1
+
+plugins:
+  netcfg:
+    routing:
+      - destination: "0.0.0.0/0"
+        gateway: "auto"  # DHCP will set this
+        interface: "vmbr0"
