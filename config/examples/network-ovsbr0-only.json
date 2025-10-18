@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "network": {
+    "interfaces": [
+      {
+        "name": "ovsbr0",
+        "type": "ovs-bridge",
+        "ports": [
+          "eth0"
+        ],
+        "ipv4": {
+          "enabled": true,
+          "dhcp": true
+        }
+      },
+      {
+        "name": "eth0",
+        "type": "ethernet",
+        "controller": "ovsbr0",
+        "ipv4": {
+          "enabled": false
+        }
+      }
+    ]
+  }
+}
