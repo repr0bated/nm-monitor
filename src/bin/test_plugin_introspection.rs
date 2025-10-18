@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use ovs_port_agent::state::plugins::NetStatePlugin;
+use ovs_port_agent::state::plugin::StatePlugin;
 use serde_json::Value;
 
 #[tokio::main]

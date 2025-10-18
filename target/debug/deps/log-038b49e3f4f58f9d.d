@@ -1,0 +1,13 @@
+/git/nm-monitor/target/debug/deps/log-038b49e3f4f58f9d.d: /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/lib.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/macros.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/serde.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/kv/mod.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/kv/error.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/kv/key.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/kv/source.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/kv/value.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/__private_api.rs
+
+/git/nm-monitor/target/debug/deps/liblog-038b49e3f4f58f9d.rmeta: /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/lib.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/macros.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/serde.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/kv/mod.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/kv/error.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/kv/key.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/kv/source.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/kv/value.rs /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/__private_api.rs
+
+/opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/lib.rs:
+/opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/macros.rs:
+/opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/serde.rs:
+/opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/kv/mod.rs:
+/opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/kv/error.rs:
+/opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/kv/key.rs:
+/opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/kv/source.rs:
+/opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/kv/value.rs:
+/opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.28/src/__private_api.rs:
