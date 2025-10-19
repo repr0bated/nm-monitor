@@ -43,10 +43,10 @@ fn main() -> Result<()> {
     println!("[5/6] Preparing mount options...");
     let options = vec![
         fuser::MountOption::FSName("ovsdb".to_string()),
-        fuser::MountOption::RO,
+        // fuser::MountOption::RO,  // Removed RO - now read-write for desired.json writes
         fuser::MountOption::AllowOther,
     ];
-    println!("      ✓ Options: read-only, allow-other");
+    println!("      ✓ Options: read-write, allow-other");
     
     println!("[6/6] Mounting filesystem...");
     println!("      This will block - filesystem is now active");
