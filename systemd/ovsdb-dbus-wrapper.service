@@ -1,0 +1,15 @@
+[Unit]
+Description=OVSDB D-Bus Wrapper Service
+Documentation=https://github.com/repr0bated/nm-monitor
+After=ovsdb-server.service
+Requires=ovsdb-server.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/ovsdb-dbus-wrapper service
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,30 @@
+# Example: VPS vmbr0 OVS Bridge with Static IP
+# Corrected format with plugins.net structure
+
+version: 1
+
+plugins:
+  net:
+    interfaces:
+      # Primary OVS bridge (vmbr0) with static IP - CORRECT IP LOCATION
+      - name: vmbr0
+        type: ovs-bridge
+        ports:
+          - ens1  # Physical uplink (actual interface name)
+        ipv4:
+          enabled: true
+          dhcp: false
+          address:
+            - ip: 80.209.240.244
+              prefix: 25
+          gateway: 80.209.240.129
+          dns:
+            - 8.8.8.8
+            - 8.8.4.4
+      
+      # Physical uplink (enslaved to bridge, no IP)
+      - name: ens1
+        type: ethernet
+        controller: vmbr0
+        ipv4:
+          enabled: false

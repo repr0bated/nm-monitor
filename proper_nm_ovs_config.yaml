@@ -1,0 +1,26 @@
+# Proper NetworkManager OVS Configuration
+# This replaces systemd-networkd with NetworkManager
+
+version: 1
+
+plugins:
+  netcfg:
+    # Disable STP and configure OVS bridge properly
+    ovs_flows:
+      - bridge: vmbr0
+        priority: 0
+        match_rule: "normal"
+        actions: "normal"
+    
+    # Basic routing (optional)
+    routing:
+      - destination: "0.0.0.0/0"
+        gateway: "80.209.240.129"
+        interface: "vmbr0"
+    
+    # DNS configuration
+    dns:
+      servers:
+        - "8.8.8.8"
+        - "8.8.4.4"
+      search_domains: []

@@ -1,0 +1,97 @@
+# Netmaker Container State Management Example
+# This configuration demonstrates introspection of Netmaker Docker containers
+# and provides a comprehensive view of WireGuard network state
+
+version: 1
+
+# Docker plugin configuration - introspects all Docker containers
+docker:
+  containers: []
+
+# Netmaker-specific plugin configuration - focuses on Netmaker containers
+netmaker:
+  containers:
+    # Netmaker server container (typically runs the API and core services)
+    - name: "netmaker-server"
+      image: "gravitl/netmaker:latest"
+      netmaker_role: "server"
+      netmaker_network: "netmaker-network"
+      node_id: "netmaker-server-001"
+      interface_name: "netmaker"
+      public_key: "placeholder_server_public_key"
+      netmaker_api_config:
+        api_host: "netmaker-server"
+        api_port: 8081
+        base_url: "/api"
+        auth_token: "${NETMAKER_API_TOKEN}"
+
+    # Netmaker UI container (optional web interface)
+    - name: "netmaker-ui"
+      image: "gravitl/netmaker-ui:latest"
+      netmaker_role: "ui"
+      netmaker_network: "netmaker-network"
+
+    # Example Netmaker client container
+    - name: "netmaker-client-01"
+      image: "gravitl/netmaker:latest"
+      netmaker_role: "client"
+      netmaker_network: "netmaker-network"
+      node_id: "client-001"
+      interface_name: "netmaker"
+      public_key: "placeholder_client_public_key"
+      wireguard_interface:
+        name: "netmaker"
+        public_key: "placeholder_client_public_key"
+        listen_port: 51821
+
+  # Filtering options for Netmaker containers
+  filters:
+    name_pattern: "netmaker-*"
+    netmaker_role: "server,client,ui"
+    network_name: "netmaker-network"
+
+  # Network analysis configuration
+  network_analysis:
+    total_nodes: 3
+    connected_nodes: 3
+    network_topology:
+      "netmaker-network":
+        - "netmaker-server"
+        - "netmaker-ui"
+        - "netmaker-client-01"
+    connectivity_health:
+      "netmaker-server": 1.0
+      "netmaker-ui": 1.0
+      "netmaker-client-01": 1.0
+
+# Network plugin configuration - manages WireGuard interfaces and bridges
+network:
+  interfaces:
+    # WireGuard interface for Netmaker server
+    - name: "netmaker"
+      type: "ethernet"  # This would be a WireGuard interface in reality
+      ipv4:
+        enabled: true
+        address:
+          - ip: "10.0.0.1"
+            prefix: 24
+      # Netmaker containers would be connected to this interface
+
+    # OVS bridge for container networking (if using OVS)
+    - name: "ovsbr0"
+      type: "ovs-bridge"
+      ports:
+        - "netmaker"
+      ipv4:
+        enabled: true
+        address:
+          - ip: "10.0.1.1"
+            prefix: 24
+
+# Netcfg plugin configuration - systemd-networkd configuration
+netcfg:
+  interfaces:
+    # Container interfaces would be managed here
+    - name: "veth-netmaker-*"
+      type: "ethernet"
+      controller: "ovsbr0"

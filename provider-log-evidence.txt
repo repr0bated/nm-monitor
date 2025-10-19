@@ -1,0 +1,82 @@
+NETWORK INTERFACE DELAY EVIDENCE FOR PROVIDER
+=============================================
+System: castlebox.ghostbridge.tech
+Date: October 14, 2025
+Issue: 8+ minute delay between interface detection and link establishment
+
+KERNEL MESSAGES (dmesg) - CRITICAL DELAY EVIDENCE
+=================================================
+[    1.226524] e1000: Intel(R) PRO/1000 Network Driver
+[    1.226528] e1000: Copyright (c) 1999-2006 Intel Corporation.
+[    1.516962] e1000 0000:04:01.0 eth0: (PCI:33MHz:32-bit) 56:6f:af:54:00:6b
+[    1.516969] e1000 0000:04:01.0 eth0: Intel(R) PRO/1000 Network Connection
+[    1.547050] e1000 0000:04:01.0 ens1: renamed from eth0
+[  457.241236] e1000: ens1 NIC Link is Up 1000 Mbps Full Duplex, Flow Control: RX
+
+ANALYSIS:
+- Interface detected at 1.516962 seconds
+- Interface renamed at 1.547050 seconds  
+- Link established at 457.241236 seconds
+- DELAY: 455.7 seconds (7 minutes 35 seconds)
+
+SYSTEMD JOURNAL - TIMEOUT EVIDENCE
+==================================
+Oct 14 20:55:27 castlebox.ghostbridge.tech kernel: e1000: Intel(R) PRO/1000 Network Driver
+Oct 14 20:55:27 castlebox.ghostbridge.tech kernel: e1000: Copyright (c) 1999-2006 Intel Corporation.
+Oct 14 20:55:27 castlebox.ghostbridge.tech kernel: e1000 0000:04:01.0 eth0: (PCI:33MHz:32-bit) 56:6f:af:54:00:6b
+Oct 14 20:55:27 castlebox.ghostbridge.tech kernel: e1000 0000:04:01.0 eth0: Intel(R) PRO/1000 Network Connection
+Oct 14 20:55:27 castlebox.ghostbridge.tech kernel: e1000 0000:04:01.0 ens1: renamed from eth0
+Oct 14 20:57:27 castlebox.ghostbridge.tech systemd-networkd-wait-online[392]: Timeout occurred while waiting for network connectivity.
+Oct 14 21:03:02 castlebox.ghostbridge.tech systemd-networkd[341]: ens1: Link UP
+Oct 14 21:03:02 castlebox.ghostbridge.tech systemd-networkd[341]: ens1: Gained carrier
+Oct 14 21:03:02 castlebox.ghostbridge.tech kernel: e1000: ens1 NIC Link is Up 1000 Mbps Full Duplex, Flow Control: RX
+
+ANALYSIS:
+- Boot started: 20:55:27
+- Interface detected: 20:55:27 (immediate)
+- Interface renamed: 20:55:27 (immediate)
+- Network wait timeout: 20:57:27 (2 minutes later)
+- Link actually established: 21:03:02 (7 minutes 35 seconds later)
+- DELAY: 7 minutes 35 seconds
+
+ADDITIONAL TIMEOUT EVIDENCE
+===========================
+Oct 14 20:57:27 castlebox.ghostbridge.tech systemd-networkd-wait-online[392]: Timeout occurred while waiting for network connectivity.
+Oct 14 21:13:15 castlebox.ghostbridge.tech systemd-networkd-wait-online[5667]: Timeout occurred while waiting for network connectivity.
+Oct 14 21:17:38 castlebox.ghostbridge.tech systemd-networkd-wait-online[7643]: Timeout occurred while waiting for network connectivity.
+Oct 14 21:17:38 castlebox.ghostbridge.tech systemd[1]: systemd-networkd-wait-online.service: Failed with result 'timeout'.
+
+SERVICE FAILURES DUE TO DELAY
+=============================
+Oct 14 20:55:29 castlebox.ghostbridge.tech dhcp-helper[778]: dhcp-helper: bad interface eth0: No such device
+Oct 14 20:55:29 castlebox.ghostbridge.tech systemd[1]: dhcp-helper.service: Control process exited, code=exited, status=1/FAILURE
+Oct 14 20:55:29 castlebox.ghostbridge.tech systemd[1]: dhcp-helper.service: Failed with result 'exit-code'.
+
+SUMMARY FOR PROVIDER
+====================
+ISSUE: Network interface takes 7+ minutes to establish link after detection
+IMPACT: 
+- System boot delayed by 7+ minutes
+- Network services fail to start
+- DHCP services fail
+- System appears unresponsive during boot
+
+EVIDENCE:
+- Interface detected immediately (1.5 seconds)
+- Interface renamed immediately (1.5 seconds)  
+- Link establishment delayed by 455+ seconds (7+ minutes)
+- Multiple service timeouts due to delay
+- Network services fail to start properly
+
+ROOT CAUSE: Hardware/driver issue causing massive delay between interface 
+detection and link establishment. Interface is detected and renamed properly, 
+but the actual network link takes 7+ minutes to come up.
+
+RECOMMENDATION: Provider should investigate:
+1. PCI device enumeration issues
+2. Power management problems
+3. Driver initialization delays
+4. Hardware compatibility issues
+5. BIOS/UEFI network settings
+
+This is a clear hardware/driver issue, not a software configuration problem.

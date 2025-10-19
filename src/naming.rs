@@ -5,6 +5,7 @@ use sha1::{Digest, Sha1};
 /// - Allowed: [A-Za-z0-9_]
 /// - Replace other chars with '_'
 /// - Deterministic, collision-safe (adds short hash if needed)
+/// - Proxmox GUI compatible (no dashes)
 pub fn container_eth_name(container: &str, index: u16) -> String {
     let suffix = format!("_eth{}", index);
     let max_base_len = 15usize.saturating_sub(suffix.len());
@@ -12,10 +13,10 @@ pub fn container_eth_name(container: &str, index: u16) -> String {
     let mut base: String = container
         .chars()
         .map(|c| {
-            if c.is_ascii_alphanumeric() {
+            if c.is_ascii_alphanumeric() || c == '_' {
                 c.to_ascii_lowercase()
             } else {
-                '_'
+                '_' // Replace dashes and other invalid chars with underscores
             }
         })
         .collect();

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "network": {
+    "interfaces": [
+      {
+        "name": "ovsbr-test",
+        "type": "ovs-bridge",
+        "ipv4": {
+          "enabled": true,
+          "dhcp": false,
+          "address": [
+            {
+              "ip": "10.99.99.1",
+              "prefix": 24
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

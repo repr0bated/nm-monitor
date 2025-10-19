@@ -1,0 +1,26 @@
+version: 1
+
+network:
+  interfaces:
+    - name: "ens1"
+      type: "ethernet"
+      ipv4:
+        enabled: true
+        dhcp: false
+        address:
+          - ip: 80.209.240.244
+            prefix: 24
+        gateway: 80.209.240.129
+        dns:
+          - 1.1.1.1
+          - 8.8.8.8
+  netcfg:
+    dns:
+      hostname: "castlebox.ghostbridge.tech"
+      search_domains:
+        - "nm.internal"
+        - "."
+  routing:
+    - destination: "default"
+      gateway: "80.209.240.129"
+      interface: "ens1"

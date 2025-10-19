@@ -1,0 +1,23 @@
+# Example: Single OVS Bridge (ovsbr0) with Uplink
+# Use --with-ovsbr1 flag to add ovsbr1 automatically
+
+version: 1
+
+network:
+  interfaces:
+    # Primary OVS bridge with uplink
+    - name: ovsbr0
+      type: ovs-bridge
+      ports:
+        - eth0  # Physical uplink interface (adjust to your interface name)
+      ipv4:
+        enabled: true
+        dhcp: true  # Or set to false and configure static IP
+    
+    # Physical uplink (enslaved to bridge)
+    - name: eth0
+      type: ethernet
+      controller: ovsbr0  # Enslaved to ovsbr0
+      ipv4:
+        enabled: false  # No IP on enslaved interface
+
